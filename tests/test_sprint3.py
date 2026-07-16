@@ -294,18 +294,32 @@ class TestReportGenerator:
 
     def test_deterministic_output(self) -> None:
         """Same decisions -> identical report."""
+        from kri.common.models import ConfidenceScore
+
         gen = ReportGenerator()
+        verified_ev = Evidence(
+            evidence_id="ev-det",
+            source_type=EvidenceSourceType.DOCUMENTATION,
+            summary="Documented rule",
+            provenance=Provenance(repo_path="Documentation/test.rst"),
+            verified=True,
+            strength=1.0,
+        )
         d1 = Decision(
             decision_id="det-z",
             series_id="s1",
             layer=ReasoningLayer.STRUCTURAL,
             statement="Z first alphabetically?",
+            evidence_graph=EvidenceGraph(comment_id="det-z", evidence=[verified_ev]),
+            confidence=ConfidenceScore(score=0.85, level=ConfidenceLevel.LIKELY),
         )
         d2 = Decision(
             decision_id="det-a",
             series_id="s1",
             layer=ReasoningLayer.SEMANTIC,
             statement="A second?",
+            evidence_graph=EvidenceGraph(comment_id="det-a", evidence=[verified_ev]),
+            confidence=ConfidenceScore(score=0.85, level=ConfidenceLevel.LIKELY),
         )
         r1 = gen.generate([d1, d2])
         r2 = gen.generate([d1, d2])
@@ -313,6 +327,57 @@ class TestReportGenerator:
         # Decisions should be sorted by decision_id.
         assert r1["decisions"][0]["decision_id"] == "det-a"
         assert r1["decisions"][1]["decision_id"] == "det-z"
+
+    def test_unpublishable_decisions_never_appear_in_findings(self) -> None:
+        """Constitution Sec. 29/30: UNKNOWN-confidence and unverified-evidence
+        decisions must never surface as findings, only as auditable drops."""
+        from kri.common.models import ConfidenceScore
+
+        verified_ev = Evidence(
+            evidence_id="ev-likely",
+            source_type=EvidenceSourceType.DOCUMENTATION,
+            summary="Documented rule",
+            provenance=Provenance(repo_path="Documentation/test.rst"),
+            verified=True,
+            strength=1.0,
+        )
+        likely_decision = Decision(
+            decision_id="find-1-likely",
+            series_id="s1",
+            layer=ReasoningLayer.STRUCTURAL,
+            statement="Verified, likely-confidence finding",
+            evidence_graph=EvidenceGraph(comment_id="find-1-likely", evidence=[verified_ev]),
+            confidence=ConfidenceScore(score=0.85, level=ConfidenceLevel.LIKELY),
+        )
+
+        unknown_decision = Decision(
+            decision_id="find-2-unknown",
+            series_id="s1",
+            layer=ReasoningLayer.STRUCTURAL,
+            statement="Verified evidence but UNKNOWN confidence",
+            evidence_graph=EvidenceGraph(comment_id="find-2-unknown", evidence=[verified_ev]),
+            confidence=ConfidenceScore(score=0.35, level=ConfidenceLevel.UNKNOWN),
+        )
+
+        no_evidence_decision = Decision(
+            decision_id="find-3-no-evidence",
+            series_id="s1",
+            layer=ReasoningLayer.STRUCTURAL,
+            statement="No evidence at all",
+            evidence_graph=None,
+        )
+
+        gen = ReportGenerator()
+        report = gen.generate([likely_decision, unknown_decision, no_evidence_decision])
+
+        assert len(report["decisions"]) == 1
+        assert report["decisions"][0]["decision_id"] == "find-1-likely"
+
+        dropped = report["dropped_decisions"]
+        assert len(dropped) == 2
+        dropped_by_id = {d["decision_id"]: d for d in dropped}
+        assert dropped_by_id["find-2-unknown"]["reason"] == "confidence_unknown"
+        assert dropped_by_id["find-3-no-evidence"]["reason"] == "no_verified_evidence"
 
 
 # ---------------------------------------------------------------------------

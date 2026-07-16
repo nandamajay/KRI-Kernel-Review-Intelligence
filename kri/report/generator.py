@@ -64,8 +64,8 @@ class ReportGenerator:
         """
         sorted_decisions = sorted(decisions, key=lambda d: d.decision_id)
 
-        publishable = [d for d in decisions if d.is_publishable()]
-        unpublishable = [d for d in decisions if not d.is_publishable()]
+        publishable = [d for d in sorted_decisions if d.is_publishable()]
+        unpublishable = [d for d in sorted_decisions if not d.is_publishable()]
 
         return {
             "disclaimer": _SIMULATION_DISCLAIMER,
@@ -79,11 +79,33 @@ class ReportGenerator:
                 "unpublishable_decisions": len(unpublishable),
             },
             "summary": self._build_summary(decisions),
-            "decisions": [
-                self.format_decision(d) for d in sorted_decisions
+            # Constitution Sec. 29/30 ("Unknown is Better Than Wrong"): only
+            # publishable decisions may surface as findings.
+            "decisions": [self.format_decision(d) for d in publishable],
+            "dropped_decisions": [
+                self._format_dropped(d) for d in unpublishable
             ],
             "counterfactuals": [],  # placeholder for MVP
             "learning_references": [],  # placeholder for MVP
+        }
+
+    @staticmethod
+    def _format_dropped(decision: Decision) -> dict[str, Any]:
+        """Format a non-publishable Decision for the audit-only drop list.
+
+        Preserves provenance (Constitution Sec. 39) without letting the
+        decision surface as a finding."""
+        if decision.evidence_graph is None or not decision.evidence_graph.has_verified_evidence():
+            reason = "no_verified_evidence"
+        elif decision.confidence is None or decision.confidence.level == ConfidenceLevel.UNKNOWN:
+            reason = "confidence_unknown"
+        else:
+            reason = "not_publishable"
+
+        return {
+            "decision_id": decision.decision_id,
+            "reason": reason,
+            "statement": decision.statement,
         }
 
     def format_decision(self, decision: Decision) -> dict[str, Any]:
