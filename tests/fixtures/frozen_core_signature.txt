@@ -1,0 +1,253 @@
+=== kri.common.models ===
+
+enum ConfidenceFactor:
+    API_CERTAINTY = 'api_certainty'
+    CODE_SIMILARITY = 'code_similarity'
+    DOCUMENTATION_SUPPORT = 'documentation_support'
+    HISTORICAL_AGREEMENT = 'historical_agreement'
+    REVIEW_HISTORY = 'review_history'
+    RUNTIME_EVIDENCE = 'runtime_evidence'
+    SUBSYSTEM_EVIDENCE = 'subsystem_evidence'
+    VERSION_CONSISTENCY = 'version_consistency'
+
+enum ConfidenceLevel:
+    CERTAIN = 'certain'
+    LIKELY = 'likely'
+    POSSIBLE = 'possible'
+    SPECULATIVE = 'speculative'
+    UNKNOWN = 'unknown'
+
+model ConfidenceScore:
+    explanation: <class'str'> (required=False)
+    factor_scores: dict[kri.common.models.ConfidenceFactor,float] (required=False)
+    factor_weights: dict[kri.common.models.ConfidenceFactor,float] (required=False)
+    level: <enum'ConfidenceLevel'> (required=True)
+    score: <class'float'> (required=True)
+
+model Decision:
+    category: <class'str'> (required=False)
+    confidence: kri.common.models.ConfidenceScore|None (required=False)
+    decision_id: <class'str'> (required=True)
+    evidence_graph: kri.common.models.EvidenceGraph|None (required=False)
+    layer: <enum'ReasoningLayer'> (required=True)
+    location: str|None (required=False)
+    patch_id: str|None (required=False)
+    pattern_id: str|None (required=False)
+    rule_id: str|None (required=False)
+    series_id: <class'str'> (required=True)
+    severity: <enum'Severity'> (required=False)
+    statement: <class'str'> (required=False)
+    def is_publishable(self) -> 'bool'
+
+value EVIDENCE_SOURCE_PRIORITY = {<EvidenceSourceType.DOCUMENTATION: 'documentation'>: 1, <EvidenceSourceType.MAINTAINERS_FILE: 'maintainers_file'>: 2, <EvidenceSourceType.API_HEADER: 'api_header'>: 3, <EvidenceSourceType.ACCEPTED_PATCH: 'accepted_patch'>: 4, <EvidenceSourceType.REJECTED_PATCH: 'rejected_patch'>: 5, <EvidenceSourceType.REVIEW_DISCUSSION: 'review_discussion'>: 6, <EvidenceSourceType.COMMIT_MESSAGE: 'commit_message'>: 7, <EvidenceSourceType.STATIC_ANALYSIS: 'static_analysis'>: 8, <EvidenceSourceType.BLAME_HISTORY: 'blame_history'>: 9, <EvidenceSourceType.CODE_SIMILARITY: 'code_similarity'>: 10, <EvidenceSourceType.MAINTAINER_BLOG: 'maintainer_blog'>: 11, <EvidenceSourceType.DESIGN_INFERENCE: 'design_inference'>: 12}
+
+model Evidence:
+    evidence_id: <class'str'> (required=True)
+    provenance: <class'kri.common.models.Provenance'> (required=True)
+    source_type: <enum'EvidenceSourceType'> (required=True)
+    strength: <class'float'> (required=False)
+    summary: <class'str'> (required=False)
+    verified: <class'bool'> (required=False)
+    version_range: kri.common.models.VersionRange|None (required=False)
+
+model EvidenceGraph:
+    accepted_examples: list[str] (required=False)
+    alternative_precedents: list[str] (required=False)
+    alternative_recommendation: str|None (required=False)
+    comment_id: <class'str'> (required=True)
+    evidence: list[kri.common.models.Evidence] (required=False)
+    rejected_examples: list[str] (required=False)
+    subsystem_rule: kri.common.models.Rule|None (required=False)
+    def has_verified_evidence(self) -> 'bool'
+
+enum EvidenceSourceType:
+    ACCEPTED_PATCH = 'accepted_patch'
+    API_HEADER = 'api_header'
+    BLAME_HISTORY = 'blame_history'
+    CODE_SIMILARITY = 'code_similarity'
+    COMMIT_MESSAGE = 'commit_message'
+    DESIGN_INFERENCE = 'design_inference'
+    DOCUMENTATION = 'documentation'
+    MAINTAINERS_FILE = 'maintainers_file'
+    MAINTAINER_BLOG = 'maintainer_blog'
+    REJECTED_PATCH = 'rejected_patch'
+    REVIEW_DISCUSSION = 'review_discussion'
+    STATIC_ANALYSIS = 'static_analysis'
+
+model KernelVersion:
+    major: <class'int'> (required=True)
+    minor: <class'int'> (required=True)
+    patch: <class'int'> (required=False)
+    raw: <class'str'> (required=True)
+    rc: int|None (required=False)
+    def sort_key(self) -> 'tuple[int, int, int, int]'
+
+model KnowledgeStateId:
+    created_at: <class'datetime.date'> (required=True)
+    dkp_versions: dict[str,str] (required=False)
+    ekg_schema_version: <class'str'> (required=True)
+    learning_iteration: <class'int'> (required=False)
+    runtime_version: <class'str'> (required=True)
+    state_id: <class'str'> (required=True)
+
+model Patch:
+    author: str|None (required=False)
+    commit_message: <class'str'> (required=False)
+    diff: <class'str'> (required=False)
+    files_changed: list[str] (required=False)
+    patch_id: <class'str'> (required=True)
+    sequence: <class'int'> (required=False)
+    series_total: <class'int'> (required=False)
+    subject: <class'str'> (required=True)
+
+enum PatchOutcome:
+    ACCEPTED = 'accepted'
+    MODIFIED = 'modified'
+    PENDING = 'pending'
+    REJECTED = 'rejected'
+
+model PatchSeries:
+    cover_letter: <class'str'> (required=False)
+    lore_thread_url: str|None (required=False)
+    patches: list[kri.common.models.Patch] (required=False)
+    provenance: <class'kri.common.models.Provenance'> (required=False)
+    series_id: <class'str'> (required=True)
+    target_kernel_version: kri.common.models.KernelVersion|None (required=False)
+    title: <class'str'> (required=False)
+    version: <class'int'> (required=False)
+
+model Provenance:
+    commit_hash: str|None (required=False)
+    repo_path: str|None (required=False)
+    retrieved_at: datetime.datetime|None (required=False)
+    source_confidence: float|None (required=False)
+    source_url: str|None (required=False)
+    transformation_history: list[str] (required=False)
+    version_or_commit: str|None (required=False)
+
+enum ReasoningLayer:
+    DESIGN = 'design'
+    ECOSYSTEM = 'ecosystem'
+    INTEGRATION = 'integration'
+    MAINTAINABILITY = 'maintainability'
+    SEMANTIC = 'semantic'
+    STRUCTURAL = 'structural'
+
+model ReviewComment:
+    author: str|None (required=False)
+    category: <class'str'> (required=False)
+    comment_id: <class'str'> (required=True)
+    is_maintainer: <class'bool'> (required=False)
+    location: str|None (required=False)
+    message: <class'str'> (required=False)
+    provenance: <class'kri.common.models.Provenance'> (required=False)
+    severity: <enum'Severity'> (required=False)
+    target_patch_id: str|None (required=False)
+    target_series_id: str|None (required=False)
+
+model Rule:
+    category: <class'str'> (required=False)
+    description: <class'str'> (required=False)
+    documentation_ref: str|None (required=False)
+    exceptions: list[str] (required=False)
+    historical_enforcement_rate: float|None (required=False)
+    rationale: <class'str'> (required=False)
+    rule_id: <class'str'> (required=True)
+    rule_type: <enum'RuleType'> (required=False)
+    version_range: kri.common.models.VersionRange|None (required=False)
+
+enum RuleType:
+    HARD = 'hard'
+    PHILOSOPHICAL = 'philosophical'
+    SOFT = 'soft'
+
+enum Severity:
+    BLOCKER = 'blocker'
+    INFO = 'info'
+    WARNING = 'warning'
+
+model VersionRange:
+    valid_from: <class'kri.common.models.KernelVersion'> (required=True)
+    valid_until: kri.common.models.KernelVersion|None (required=False)
+
+=== kri.common.interfaces ===
+
+protocol ConfidenceEngine:
+    def score(self, decision: 'Decision', evidence_graph: 'EvidenceGraph') -> 'ConfidenceScore'
+
+protocol DomainKnowledgePackage:
+    def build_target(self) -> 'str'
+    def manifest(self) -> 'dict[str, Any]'
+    def owns_file(self, path: 'str') -> 'bool'
+    def patterns(self) -> 'list[Pattern]'
+    def reasoning_plugins(self) -> 'list[ReasoningPlugin]'
+    def rules(self, kernel_version: 'KernelVersion | None' = None) -> 'list[Rule]'
+    def seed_graph(self, knowledge_manager: 'KnowledgeManager') -> 'None'
+    def supports_version(self, kernel_version: 'KernelVersion') -> 'bool'
+    property name
+    property version
+
+protocol EvidenceEngine:
+    def format(self, evidence: 'Evidence') -> 'str'
+    def gather(self, decision: 'Decision') -> 'EvidenceGraph'
+    def verify(self, evidence: 'Evidence') -> 'Evidence'
+
+protocol KernelBuilder:
+    def build(self, target: 'str') -> 'dict[str, Any]'
+    def configure(self, target: 'str', config: 'dict[str, Any]') -> 'dict[str, Any]'
+    def get_errors(self) -> 'list[str]'
+    def get_warnings(self) -> 'list[str]'
+
+protocol KnowledgeManager:
+    def get_evidence(self, decision: 'Decision') -> 'list[Evidence]'
+    def load_dkp(self, domain: 'str') -> 'DomainKnowledgePackage'
+    def query_graph(self, query: 'GraphQuery') -> 'GraphResult'
+    def restore(self, state_id: 'str') -> 'KnowledgeStateId'
+    def snapshot(self) -> 'KnowledgeStateId'
+
+protocol LearningEngine:
+    def benchmark(self) -> 'dict[str, Any]'
+    def ingest(self, thread: 'Any') -> 'list[Pattern]'
+    def update_knowledge(self, pattern: 'Pattern') -> 'KnowledgeStateId'
+    def validate(self, pattern: 'Pattern') -> 'dict[str, Any]'
+
+protocol LoreManager:
+    def extract_reviews(self, thread: 'Any') -> 'list[ReviewComment]'
+    def fetch(self, thread_id: 'str') -> 'Any'
+    def parse_conversation(self, thread: 'Any') -> 'list[dict[str, Any]]'
+    def search(self, query: 'str') -> 'list[str]'
+
+protocol PatchManager:
+    def correlate_reviews(self, series: 'PatchSeries') -> 'dict[str, list[ReviewComment]]'
+    def extract_versions(self, series: 'PatchSeries') -> 'list[int]'
+    def normalize(self, patch: 'Patch') -> 'Patch'
+    def parse(self, thread: 'Any') -> 'PatchSeries'
+
+protocol ReasoningPlugin:
+    def applies(self, patch: 'Patch', series: 'PatchSeries') -> 'bool'
+    def evaluate(self, patch: 'Patch', series: 'PatchSeries') -> 'list[Decision]'
+    property plugin_id
+    property trigger
+
+protocol RepositoryManager:
+    def apply_patch(self, series: 'PatchSeries') -> 'TreeState'
+    def blame(self, file: 'str', line: 'int') -> 'list[dict[str, Any]]'
+    def checkout(self, version: 'str') -> 'TreeState'
+    def diff(self, commit_a: 'str', commit_b: 'str') -> 'Diff'
+
+protocol ReviewEngine:
+    def explain(self, decision: 'Decision') -> 'EvidenceGraph'
+    def generate_report(self, decisions: 'list[Decision]') -> 'ReviewReport'
+    def review(self, patch_series: 'PatchSeries', dkp: 'DomainKnowledgePackage | None', extra_plugins: "list['ReasoningPlugin'] | None" = None) -> 'list[Decision]'
+
+protocol SimulationEngine:
+    def audit(self, report: 'ReviewReport') -> 'dict[str, Any]'
+    def replay(self, patch_series: 'PatchSeries', knowledge_state: 'str') -> 'ReviewReport'
+    def simulate(self, patch_series: 'PatchSeries', config: 'dict[str, Any]') -> 'ReviewReport'
+
+protocol StaticAnalysisManager:
+    def normalize(self, output: 'Any') -> 'list[StaticFinding]'
+    def run_checkpatch(self, patch: 'Patch') -> 'list[StaticFinding]'
+    def run_coccinelle(self, files: 'list[str]', scripts: 'list[str]') -> 'list[StaticFinding]'
+    def run_smatch(self, files: 'list[str]') -> 'list[StaticFinding]'
+    def run_sparse(self, files: 'list[str]') -> 'list[StaticFinding]'
