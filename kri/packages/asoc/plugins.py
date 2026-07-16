@@ -36,6 +36,7 @@ from kri.common.models import (
     Decision,
     PatchSeries,
     ReasoningLayer,
+    SeriesContext,
     Severity,
 )
 from kri.common.models import (
@@ -96,12 +97,23 @@ class PatternMatchPlugin:
         adds = "\n".join(_added_lines(patch.diff)).lower()
         return any(sig in adds for sig in self._signals)
 
-    def evaluate(self, patch: CorePatch, series: PatchSeries) -> list[Decision]:
+    def evaluate(
+        self,
+        patch: CorePatch,
+        series: PatchSeries,
+        *,
+        series_context: SeriesContext | None = None,
+    ) -> list[Decision]:
         """Emit a candidate Decision if the pattern's signals are present.
 
         The Decision carries the pattern_id AND its supporting rule_id so the
         Evidence Engine can gather the seeded Evidence (real provenance). Evidence
-        and confidence are intentionally left unset (the Engine fills them)."""
+        and confidence are intentionally left unset (the Engine fills them).
+
+        ``series_context`` (WP-9.1a) is accepted for Protocol conformance but
+        not yet consumed here -- cross-patch suppression/upgrade for ASoC
+        findings happens in the Evidence Engine's cross-patch resolver, not
+        in this plugin."""
         if not self.applies(patch, series):
             return []
         adds = _added_lines(patch.diff)

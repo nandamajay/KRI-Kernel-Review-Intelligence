@@ -38,6 +38,7 @@ from kri.common.models import (
     PatchSeries,
     ReasoningLayer,
 )
+from kri.review_engine.series_context import build_series_context
 
 # MVP reasoning layers (SPEC §7): structural, semantic, design.
 _MVP_LAYERS: frozenset[ReasoningLayer] = frozenset({
@@ -87,6 +88,8 @@ class ReviewEngineImpl:
         plugins.extend(extra_plugins or [])
         decisions: list[Decision] = []
 
+        series_context = build_series_context(patch_series)
+
         for patch in sorted(
             patch_series.patches, key=lambda p: (p.sequence or 0, p.patch_id)
         ):
@@ -96,7 +99,9 @@ class ReviewEngineImpl:
                 if plugin_layer not in _MVP_LAYERS:
                     continue
 
-                raw_decisions = plugin.evaluate(patch, patch_series)
+                raw_decisions = plugin.evaluate(
+                    patch, patch_series, series_context=series_context
+                )
                 for decision in raw_decisions:
                     # Attach evidence graph.
                     evidence_graph = self._evidence.gather(decision)

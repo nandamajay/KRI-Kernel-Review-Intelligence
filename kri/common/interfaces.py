@@ -27,6 +27,7 @@ from kri.common.models import (
     PatchSeries,
     ReviewComment,
     Rule,
+    SeriesContext,
 )
 
 # ---------------------------------------------------------------------------
@@ -415,8 +416,18 @@ class ReasoningPlugin(Protocol):
         """Cheap generic check of whether this plugin should run for the patch."""
         ...
 
-    def evaluate(self, patch: Patch, series: PatchSeries) -> list[Decision]:
-        """Run domain reasoning; return Decisions (evidence/confidence filled later)."""
+    def evaluate(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        *,
+        series_context: SeriesContext | None = None,
+    ) -> list[Decision]:
+        """Run domain reasoning; return Decisions (evidence/confidence filled later).
+
+        ``series_context`` is the cross-patch accumulator built once for the
+        whole series (WP-9.1a); it is keyword-only with a default of ``None``
+        so existing plugins that don't accept/use it keep working unchanged."""
         ...
 
 

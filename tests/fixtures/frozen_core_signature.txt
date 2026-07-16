@@ -161,6 +161,18 @@ enum RuleType:
     PHILOSOPHICAL = 'philosophical'
     SOFT = 'soft'
 
+model SeriesContext:
+    deleted_files: dict[int,set[str]] (required=False)
+    introduced_symbols: dict[int,set[str]] (required=False)
+    kbuild_edits: dict[int,set[str]] (required=False)
+    maintainers_deltas: dict[int,list[str]] (required=False)
+    new_dt_compatibles: dict[int,set[str]] (required=False)
+    new_files: dict[int,set[str]] (required=False)
+    new_kconfig_symbols: dict[int,set[str]] (required=False)
+    removed_symbols: dict[int,set[str]] (required=False)
+    series_id: <class'str'> (required=True)
+    target_kernel_version: kri.common.models.KernelVersion|None (required=False)
+
 enum Severity:
     BLOCKER = 'blocker'
     INFO = 'info'
@@ -225,7 +237,7 @@ protocol PatchManager:
 
 protocol ReasoningPlugin:
     def applies(self, patch: 'Patch', series: 'PatchSeries') -> 'bool'
-    def evaluate(self, patch: 'Patch', series: 'PatchSeries') -> 'list[Decision]'
+    def evaluate(self, patch: 'Patch', series: 'PatchSeries', *, series_context: 'SeriesContext | None' = None) -> 'list[Decision]'
     property plugin_id
     property trigger
 

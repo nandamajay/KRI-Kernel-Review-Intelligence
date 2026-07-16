@@ -355,6 +355,31 @@ class KnowledgeStateId(BaseModel):
     learning_iteration: int = 0
 
 
+class SeriesContext(BaseModel):
+    """Cross-patch accumulator for a PatchSeries (WP-9.1a; SPEC.md Sec. 12).
+
+    Kernel patch series routinely split one change across N patches: a symbol
+    declared in patch 1/N and used in patch 3/N is correct kernel practice, not
+    an error. Built once, deterministically, from a PatchSeries via
+    ``kri.review_engine.series_context.build_series_context`` -- a pure
+    function of the series (+ target_kernel_version), so it introduces no
+    Constitution Sec. 40 nondeterminism.
+
+    Every dict is keyed by ``Patch.sequence`` (the position within the series
+    at which the symbol/file/etc. was introduced or removed)."""
+
+    series_id: str
+    target_kernel_version: KernelVersion | None = None
+    introduced_symbols: dict[int, set[str]] = Field(default_factory=dict)
+    removed_symbols: dict[int, set[str]] = Field(default_factory=dict)
+    new_files: dict[int, set[str]] = Field(default_factory=dict)
+    deleted_files: dict[int, set[str]] = Field(default_factory=dict)
+    new_kconfig_symbols: dict[int, set[str]] = Field(default_factory=dict)
+    new_dt_compatibles: dict[int, set[str]] = Field(default_factory=dict)
+    maintainers_deltas: dict[int, list[str]] = Field(default_factory=dict)
+    kbuild_edits: dict[int, set[str]] = Field(default_factory=dict)
+
+
 __all__ = [
     "Severity",
     "ConfidenceLevel",
@@ -376,4 +401,5 @@ __all__ = [
     "ConfidenceScore",
     "Decision",
     "KnowledgeStateId",
+    "SeriesContext",
 ]

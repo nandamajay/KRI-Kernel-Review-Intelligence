@@ -8,7 +8,13 @@ lambda p: p.patch_id)`` is a string sort, so on any series with >= 10 patches
 from __future__ import annotations
 
 from kri.common.interfaces import DomainKnowledgePackage
-from kri.common.models import Decision, Patch, PatchSeries, ReasoningLayer
+from kri.common.models import (
+    Decision,
+    Patch,
+    PatchSeries,
+    ReasoningLayer,
+    SeriesContext,
+)
 from kri.confidence_engine.engine import ConfidenceEngineImpl
 from kri.evidence_engine.engine import EvidenceEngineImpl
 from kri.knowledge_manager.manager import KnowledgeManagerImpl
@@ -37,7 +43,13 @@ class _SequenceRecordingPlugin:
     def applies(self, patch: Patch, series: PatchSeries) -> bool:
         return True
 
-    def evaluate(self, patch: Patch, series: PatchSeries) -> list[Decision]:
+    def evaluate(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        *,
+        series_context: SeriesContext | None = None,
+    ) -> list[Decision]:
         self._observed.append(patch.sequence)
         return []
 

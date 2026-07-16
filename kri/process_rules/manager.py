@@ -39,6 +39,7 @@ from kri.common.models import (
     PatchSeries,
     Provenance,
     ReasoningLayer,
+    SeriesContext,
     Severity,
 )
 from kri.knowledge.version import make_range
@@ -283,7 +284,13 @@ class ProcessEtiquettePlugin:
     def applies(self, patch: Patch, series: PatchSeries) -> bool:
         return True
 
-    def evaluate(self, patch: Patch, series: PatchSeries) -> list[Decision]:
+    def evaluate(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        *,
+        series_context: SeriesContext | None = None,
+    ) -> list[Decision]:
         return self._manager.check(patch, series)
 
 
