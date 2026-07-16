@@ -9,3 +9,4 @@ reviewed reason.
 | date | precision | recall | f1 | commit | notes |
 |---|---|---|---|---|---|
 | 2026-07-16 | 0.1493 | 1.0000 | 0.2597 | 1fbf6f5 | Phase-A floor set: precision>=0.13, recall>=0.95, f1>=0.22 |
+| 2026-07-16 | 0.1493 | 1.0000 | 0.2597 | 956b73a | WP-9.1a (sequence fix + SeriesContext + cross-patch resolver): unchanged. Floor NOT ratcheted -- see WP-9.1a close-out report for why the cached-fixture benchmark doesn't exercise the FP class this WP targets. |
