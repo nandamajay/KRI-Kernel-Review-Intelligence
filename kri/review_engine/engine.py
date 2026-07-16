@@ -87,7 +87,9 @@ class ReviewEngineImpl:
         plugins.extend(extra_plugins or [])
         decisions: list[Decision] = []
 
-        for patch in sorted(patch_series.patches, key=lambda p: p.patch_id):
+        for patch in sorted(
+            patch_series.patches, key=lambda p: (p.sequence or 0, p.patch_id)
+        ):
             for plugin in self._matching_plugins(plugins, patch, patch_series):
                 # Only run MVP layers.
                 plugin_layer = _get_plugin_layer(plugin)
