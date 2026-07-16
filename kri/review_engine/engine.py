@@ -104,7 +104,9 @@ class ReviewEngineImpl:
                 )
                 for decision in raw_decisions:
                     # Attach evidence graph.
-                    evidence_graph = self._evidence.gather(decision)
+                    evidence_graph = self._evidence.gather(
+                        decision, series_context=series_context
+                    )
                     decision = decision.model_copy(
                         update={"evidence_graph": evidence_graph}
                     )

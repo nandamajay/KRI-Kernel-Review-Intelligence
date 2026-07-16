@@ -20,8 +20,10 @@ from kri.common.models import (
     EvidenceGraph,
     EvidenceSourceType,
     Rule,
+    SeriesContext,
     VersionRange,
 )
+from kri.evidence_engine.cross_patch_resolver import resolve_symbol_reference
 from kri.knowledge.schema import (
     EDGE_EXEMPLIFIES,
     NODE_RULE,
@@ -32,6 +34,12 @@ from kri.knowledge_manager.manager import KnowledgeManagerImpl
 _LORE_URL_RE = re.compile(
     r"^https?://lore\.kernel\.org/[a-zA-Z0-9._\-]+/[^\s]+$"
 )
+
+_CROSS_PATCH_SOURCE_TYPES = frozenset({
+    EvidenceSourceType.MISSING_SYMBOL,
+    EvidenceSourceType.MISSING_FILE,
+    EvidenceSourceType.MISSING_BINDING,
+})
 
 
 def _strength_from_priority(source_type: EvidenceSourceType) -> float:
@@ -60,7 +68,9 @@ class EvidenceEngineImpl:
     def __init__(self, knowledge_manager: KnowledgeManagerImpl) -> None:
         self._km = knowledge_manager
 
-    def gather(self, decision: Decision) -> EvidenceGraph:
+    def gather(
+        self, decision: Decision, *, series_context: SeriesContext | None = None
+    ) -> EvidenceGraph:
         """Assemble an Evidence Graph for a decision from all available sources.
 
         Steps:
@@ -69,6 +79,9 @@ class EvidenceEngineImpl:
         3. Fill accepted/rejected examples via EXEMPLIFIES edges on patterns.
         4. Verify each evidence item.
         5. Return the fully populated, deterministically sorted EvidenceGraph.
+
+        ``series_context`` (WP-9.1a) is forwarded to ``verify()`` so missing-
+        symbol/file/binding evidence can be resolved against the series.
         """
         # Get candidate evidence nodes from the KG.
         candidates = self._km.get_evidence(decision)
@@ -88,7 +101,7 @@ class EvidenceEngineImpl:
         # Verify each evidence item and sort by priority.
         verified_evidence: list[Evidence] = []
         for ev in candidates:
-            verified_ev = self.verify(ev)
+            verified_ev = self.verify(ev, series_context=series_context)
             verified_evidence.append(verified_ev)
 
         # Sort by priority (lower EVIDENCE_SOURCE_PRIORITY = higher priority = first).
@@ -97,10 +110,22 @@ class EvidenceEngineImpl:
 
         return graph
 
-    def verify(self, evidence: Evidence) -> Evidence:
+    def verify(
+        self, evidence: Evidence, *, series_context: SeriesContext | None = None
+    ) -> Evidence:
         """Verify an evidence item against its provenance.
 
-        Verification checks (in order):
+        Cross-patch resolution (WP-9.1a) runs first for MISSING_SYMBOL/
+        MISSING_FILE/MISSING_BINDING evidence when a ``series_context`` and
+        the evidence's ``symbol_ref``/``patch_sequence`` are available:
+        - "introduced_earlier": satisfied by an earlier patch in the same
+          series -- downgraded to verified=False with a ``dropped_reason``.
+        - "introduced_later": a real bisectability bug -- stays verified,
+          flagged via ``bisectability_violation=True``.
+        - "introduced_here" / "not_in_series": falls through to the
+          provenance-based checks below (no series information to act on).
+
+        Provenance-based verification checks (in order):
         1. source_url contains "lore.kernel.org" and is well-formed -> verified
         2. repo_path is set and non-empty -> verified
         3. commit_hash is set and non-empty -> verified
@@ -110,6 +135,27 @@ class EvidenceEngineImpl:
         """
         # Create a deep copy to avoid mutating the original.
         ev = evidence.model_copy(deep=True)
+
+        if (
+            series_context is not None
+            and ev.source_type in _CROSS_PATCH_SOURCE_TYPES
+            and ev.symbol_ref
+            and ev.patch_sequence is not None
+        ):
+            outcome = resolve_symbol_reference(
+                ev.symbol_ref, ev.patch_sequence, series_context
+            )
+            if outcome == "introduced_earlier":
+                ev.verified = False
+                ev.strength = 0.0
+                ev.dropped_reason = "satisfied_by_earlier_patch_in_series"
+                return ev
+            if outcome == "introduced_later":
+                ev.verified = True
+                ev.strength = _strength_from_priority(ev.source_type)
+                ev.bisectability_violation = True
+                ev.dropped_reason = None
+                return ev
 
         prov = ev.provenance
 

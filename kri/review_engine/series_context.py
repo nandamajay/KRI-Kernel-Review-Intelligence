@@ -17,6 +17,10 @@ kernel-patch shapes, not parse C/DT/Kconfig grammars fully:
   - C function definitions: a top-level ``+<ret-type> <name>(`` in an added
     line is treated as introducing ``<name>``; a corresponding removed line
     is treated as removing it.
+  - C function calls: any ``<name>(`` in an added line (excluding the
+    introducing line itself and common C keywords like ``if``/``for``) is
+    treated as a *use* of ``<name>``, feeding the cross-patch resolver's
+    bisectability check.
   - New/deleted files: ``diff --git a/X b/Y`` header followed by
     ``new file mode`` / ``deleted file mode``.
   - DT compatibles: ``.compatible = "..."`` (or ``compatible = "...";`` in a
@@ -40,6 +44,10 @@ _NEW_FILE_RE = re.compile(r"^new file mode\b")
 _DELETED_FILE_RE = re.compile(r"^deleted file mode\b")
 _DT_COMPATIBLE_RE = re.compile(r'^\+.*\bcompatible\s*=\s*"([^"]+)"')
 _KCONFIG_SYMBOL_RE = re.compile(r"^\+config\s+(\w+)")
+_CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_C_KEYWORDS = frozenset({
+    "if", "for", "while", "switch", "return", "sizeof", "defined", "do", "else",
+})
 
 
 def _added_lines(diff: str) -> list[str]:
@@ -101,6 +109,7 @@ def _accumulate_patch(ctx: SeriesContext, seq: int, patch: Patch) -> None:
 
     introduced: set[str] = set()
     removed: set[str] = set()
+    used: set[str] = set()
     new_files: set[str] = set()
     deleted_files: set[str] = set()
     new_kconfig: set[str] = set()
@@ -123,8 +132,15 @@ def _accumulate_patch(ctx: SeriesContext, seq: int, patch: Patch) -> None:
 
         if line.startswith("+") and not line.startswith("+++"):
             func_m = _FUNC_DEF_RE.match(line)
-            if func_m:
-                introduced.add(func_m.group(1))
+            def_name = func_m.group(1) if func_m else None
+            if def_name:
+                introduced.add(def_name)
+
+            for call_m in _CALL_RE.finditer(line[1:]):
+                name = call_m.group(1)
+                if name == def_name or name in _C_KEYWORDS:
+                    continue
+                used.add(name)
 
             dt_m = _DT_COMPATIBLE_RE.match(line)
             if dt_m:
@@ -151,6 +167,8 @@ def _accumulate_patch(ctx: SeriesContext, seq: int, patch: Patch) -> None:
         ctx.introduced_symbols[seq] = introduced
     if removed:
         ctx.removed_symbols[seq] = removed
+    if used:
+        ctx.used_symbols[seq] = used
     if new_files:
         ctx.new_files[seq] = new_files
     if deleted_files:

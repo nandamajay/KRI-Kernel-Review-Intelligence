@@ -24,7 +24,7 @@ def test_core_types_importable() -> None:
     assert models.Severity.BLOCKER.value == "blocker"
     assert len(list(models.ReasoningLayer)) == 6
     assert len(list(models.ConfidenceFactor)) == 8
-    assert len(models.EVIDENCE_SOURCE_PRIORITY) == 12
+    assert len(models.EVIDENCE_SOURCE_PRIORITY) == 15
 
 
 def test_confidence_level_from_score_mapping() -> None:

@@ -100,6 +100,9 @@ class EvidenceSourceType(str, Enum):
     CODE_SIMILARITY = "code_similarity"      # priority 10, Medium
     MAINTAINER_BLOG = "maintainer_blog"      # priority 11, Low-Medium
     DESIGN_INFERENCE = "design_inference"    # priority 12, Low (must be speculative)
+    MISSING_SYMBOL = "missing_symbol"        # priority 13, cross-patch resolver input
+    MISSING_FILE = "missing_file"            # priority 13, cross-patch resolver input
+    MISSING_BINDING = "missing_binding"      # priority 13, cross-patch resolver input
 
 
 # Lower number == higher reliability (Blueprint Sec. 15.3 priority matrix).
@@ -116,6 +119,9 @@ EVIDENCE_SOURCE_PRIORITY: dict[EvidenceSourceType, int] = {
     EvidenceSourceType.CODE_SIMILARITY: 10,
     EvidenceSourceType.MAINTAINER_BLOG: 11,
     EvidenceSourceType.DESIGN_INFERENCE: 12,
+    EvidenceSourceType.MISSING_SYMBOL: 13,
+    EvidenceSourceType.MISSING_FILE: 13,
+    EvidenceSourceType.MISSING_BINDING: 13,
 }
 
 
@@ -249,6 +255,38 @@ class Evidence(BaseModel):
     version_range: VersionRange | None = None
     verified: bool = False
     strength: float = Field(0.0, ge=0.0, le=1.0, description="Evidence Engine strength score")
+    symbol_ref: str | None = Field(
+        None,
+        description=(
+            "Symbol/file/binding identifier this evidence is about (WP-9.1a "
+            "cross-patch resolver input for MISSING_SYMBOL/MISSING_FILE/"
+            "MISSING_BINDING source types)."
+        ),
+    )
+    patch_sequence: int | None = Field(
+        None,
+        description=(
+            "Sequence of the patch that raised this evidence, within its "
+            "series (WP-9.1a cross-patch resolver input)."
+        ),
+    )
+    dropped_reason: str | None = Field(
+        None,
+        description=(
+            "Set by the Evidence Engine when cross-patch resolution "
+            "downgrades this evidence to unverified, e.g. "
+            "'satisfied_by_earlier_patch_in_series' (WP-9.1a)."
+        ),
+    )
+    bisectability_violation: bool = Field(
+        False,
+        description=(
+            "Set by the Evidence Engine when cross-patch resolution finds "
+            "the referenced symbol/file/binding is only introduced by a "
+            "later patch in the same series -- a real bisectability bug "
+            "(WP-9.1a)."
+        ),
+    )
 
 
 class EvidenceGraph(BaseModel):
@@ -372,6 +410,7 @@ class SeriesContext(BaseModel):
     target_kernel_version: KernelVersion | None = None
     introduced_symbols: dict[int, set[str]] = Field(default_factory=dict)
     removed_symbols: dict[int, set[str]] = Field(default_factory=dict)
+    used_symbols: dict[int, set[str]] = Field(default_factory=dict)
     new_files: dict[int, set[str]] = Field(default_factory=dict)
     deleted_files: dict[int, set[str]] = Field(default_factory=dict)
     new_kconfig_symbols: dict[int, set[str]] = Field(default_factory=dict)

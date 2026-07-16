@@ -251,14 +251,28 @@ class ReviewEngine(Protocol):
 class EvidenceEngine(Protocol):
     """Assemble, verify, and format evidence (Constitution Sec. 28/29 enforcement point)."""
 
-    def gather(self, decision: Decision) -> EvidenceGraph:
-        """Assemble an Evidence Graph for a decision from all available sources."""
+    def gather(
+        self, decision: Decision, *, series_context: SeriesContext | None = None
+    ) -> EvidenceGraph:
+        """Assemble an Evidence Graph for a decision from all available sources.
+
+        ``series_context`` (WP-9.1a) is the cross-patch accumulator built once
+        for the whole series; when present it is forwarded to ``verify()`` so
+        missing-symbol/file/binding evidence can be resolved against it."""
         ...
 
-    def verify(self, evidence: Evidence) -> Evidence:
+    def verify(
+        self, evidence: Evidence, *, series_context: SeriesContext | None = None
+    ) -> Evidence:
         """Verify an evidence item is sourced, relevant, verifiable, versioned.
         Returns the item with ``verified`` and ``strength`` populated. Unverifiable
-        evidence must be flagged (verified=False)."""
+        evidence must be flagged (verified=False).
+
+        ``series_context`` (WP-9.1a) is keyword-only with a default of
+        ``None`` -- when provided and ``evidence.source_type`` is one of the
+        cross-patch source types (missing symbol/file/binding), the item is
+        resolved against the series before falling back to provenance-based
+        verification."""
         ...
 
     def format(self, evidence: Evidence) -> str:

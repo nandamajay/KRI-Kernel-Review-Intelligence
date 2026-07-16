@@ -39,14 +39,18 @@ model Decision:
     statement: <class'str'> (required=False)
     def is_publishable(self) -> 'bool'
 
-value EVIDENCE_SOURCE_PRIORITY = {<EvidenceSourceType.DOCUMENTATION: 'documentation'>: 1, <EvidenceSourceType.MAINTAINERS_FILE: 'maintainers_file'>: 2, <EvidenceSourceType.API_HEADER: 'api_header'>: 3, <EvidenceSourceType.ACCEPTED_PATCH: 'accepted_patch'>: 4, <EvidenceSourceType.REJECTED_PATCH: 'rejected_patch'>: 5, <EvidenceSourceType.REVIEW_DISCUSSION: 'review_discussion'>: 6, <EvidenceSourceType.COMMIT_MESSAGE: 'commit_message'>: 7, <EvidenceSourceType.STATIC_ANALYSIS: 'static_analysis'>: 8, <EvidenceSourceType.BLAME_HISTORY: 'blame_history'>: 9, <EvidenceSourceType.CODE_SIMILARITY: 'code_similarity'>: 10, <EvidenceSourceType.MAINTAINER_BLOG: 'maintainer_blog'>: 11, <EvidenceSourceType.DESIGN_INFERENCE: 'design_inference'>: 12}
+value EVIDENCE_SOURCE_PRIORITY = {<EvidenceSourceType.DOCUMENTATION: 'documentation'>: 1, <EvidenceSourceType.MAINTAINERS_FILE: 'maintainers_file'>: 2, <EvidenceSourceType.API_HEADER: 'api_header'>: 3, <EvidenceSourceType.ACCEPTED_PATCH: 'accepted_patch'>: 4, <EvidenceSourceType.REJECTED_PATCH: 'rejected_patch'>: 5, <EvidenceSourceType.REVIEW_DISCUSSION: 'review_discussion'>: 6, <EvidenceSourceType.COMMIT_MESSAGE: 'commit_message'>: 7, <EvidenceSourceType.STATIC_ANALYSIS: 'static_analysis'>: 8, <EvidenceSourceType.BLAME_HISTORY: 'blame_history'>: 9, <EvidenceSourceType.CODE_SIMILARITY: 'code_similarity'>: 10, <EvidenceSourceType.MAINTAINER_BLOG: 'maintainer_blog'>: 11, <EvidenceSourceType.DESIGN_INFERENCE: 'design_inference'>: 12, <EvidenceSourceType.MISSING_SYMBOL: 'missing_symbol'>: 13, <EvidenceSourceType.MISSING_FILE: 'missing_file'>: 13, <EvidenceSourceType.MISSING_BINDING: 'missing_binding'>: 13}
 
 model Evidence:
+    bisectability_violation: <class'bool'> (required=False)
+    dropped_reason: str|None (required=False)
     evidence_id: <class'str'> (required=True)
+    patch_sequence: int|None (required=False)
     provenance: <class'kri.common.models.Provenance'> (required=True)
     source_type: <enum'EvidenceSourceType'> (required=True)
     strength: <class'float'> (required=False)
     summary: <class'str'> (required=False)
+    symbol_ref: str|None (required=False)
     verified: <class'bool'> (required=False)
     version_range: kri.common.models.VersionRange|None (required=False)
 
@@ -70,6 +74,9 @@ enum EvidenceSourceType:
     DOCUMENTATION = 'documentation'
     MAINTAINERS_FILE = 'maintainers_file'
     MAINTAINER_BLOG = 'maintainer_blog'
+    MISSING_BINDING = 'missing_binding'
+    MISSING_FILE = 'missing_file'
+    MISSING_SYMBOL = 'missing_symbol'
     REJECTED_PATCH = 'rejected_patch'
     REVIEW_DISCUSSION = 'review_discussion'
     STATIC_ANALYSIS = 'static_analysis'
@@ -172,6 +179,7 @@ model SeriesContext:
     removed_symbols: dict[int,set[str]] (required=False)
     series_id: <class'str'> (required=True)
     target_kernel_version: kri.common.models.KernelVersion|None (required=False)
+    used_symbols: dict[int,set[str]] (required=False)
 
 enum Severity:
     BLOCKER = 'blocker'
@@ -201,8 +209,8 @@ protocol DomainKnowledgePackage:
 
 protocol EvidenceEngine:
     def format(self, evidence: 'Evidence') -> 'str'
-    def gather(self, decision: 'Decision') -> 'EvidenceGraph'
-    def verify(self, evidence: 'Evidence') -> 'Evidence'
+    def gather(self, decision: 'Decision', *, series_context: 'SeriesContext | None' = None) -> 'EvidenceGraph'
+    def verify(self, evidence: 'Evidence', *, series_context: 'SeriesContext | None' = None) -> 'Evidence'
 
 protocol KernelBuilder:
     def build(self, target: 'str') -> 'dict[str, Any]'
