@@ -106,3 +106,37 @@ def test_hash_regex_matches_expected_shape() -> None:
     assert _HASH_RE.match("abc1234def567") is not None
     assert _HASH_RE.match("concept:asoc-accept-tdm-via-machine-driver") is None
     assert _HASH_RE.match("") is None
+
+
+def test_no_silent_placeholder_to_real_migration() -> None:
+    """Trip-wire for the placeholder -> real-hash transition.
+
+    xfail_strict (pyproject.toml) only instruments *declarative*
+    ``@pytest.mark.xfail`` markers -- it has no effect on
+    ``test_every_seeded_precedent_hash_exists_in_kernel_tree``, which calls
+    ``pytest.xfail()`` imperatively and only when failures are found. Once
+    every entry in CANONICAL_PRECEDENTS is a real, relevant hash, that test
+    falls through to a plain PASS with no xfail marker involved -- silent,
+    easy to miss in CI output.
+
+    This test is the independent signal: it fails loudly the moment NO
+    placeholder ``concept:`` entries remain, forcing a human to consciously
+    remove the ``pytest.xfail()`` gate in the sibling test rather than
+    letting a placeholder->real migration go unnoticed. See
+    WP-9.2a-polish-v2 closeout notes (Step 3 smoke test).
+    """
+    has_placeholder = any(
+        entry["commit_hash"].startswith("concept:")
+        for precedents in CANONICAL_PRECEDENTS.values()
+        for entry in precedents
+    )
+    assert has_placeholder, (
+        "CANONICAL_PRECEDENTS no longer contains any 'concept:' placeholder "
+        "entries -- every entry has apparently been migrated to a real, "
+        "verified commit hash. This is exactly the moment the xfail() gate "
+        "in test_every_seeded_precedent_hash_exists_in_kernel_tree must be "
+        "removed (per WP-9.2a-polish-v2 sub-commit 2). Do not silence this "
+        "test by re-adding a placeholder -- delete this test and the "
+        "pytest.xfail() call together once the migration is real and "
+        "reviewed."
+    )
