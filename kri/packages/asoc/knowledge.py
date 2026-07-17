@@ -690,6 +690,27 @@ def get_canonical_recommendation(rule_id: str) -> AlternativeRecommendation | No
     return CANONICAL_RECOMMENDATIONS.get(rule_id)
 
 
+# ---------------------------------------------------------------------------
+# Canonical precedents — commit references demonstrating the correct pattern.
+# Each entry MUST be a real upstream commit hash verified via
+# `git -C data/kernel/linux cat-file -e <hash>`.
+# Placeholder concept: strings are pending replacement with real hashes
+# (WP-9.2a-polish-v2 sub-commit 2, human-authored).
+# ---------------------------------------------------------------------------
+
+CANONICAL_PRECEDENTS: dict[str, list[str]] = {
+    "asoc-tdm-slot-not-userspace": [
+        "concept:asoc-accept-tdm-via-machine-driver",
+    ],
+    "asoc-resume-must-clean-up": [
+        "concept:asoc-accept-resume-with-cleanup",
+    ],
+    "asoc-use-component-read-write": [
+        "concept:asoc-accept-component-read-write",
+    ],
+}
+
+
 __all__ = [
     "ASOC_ROOT",
     "ASOC_CODECS_ROOT",
@@ -699,6 +720,7 @@ __all__ = [
     "SUPPORT_THRESHOLDS",
     "FILE_PATTERN_MEANINGS",
     "CANONICAL_RECOMMENDATIONS",
+    "CANONICAL_PRECEDENTS",
     "build_rules",
     "build_apis",
     "build_patterns",
