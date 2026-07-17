@@ -60,6 +60,7 @@ model EvidenceGraph:
     alternative_recommendation: str|None (required=False)
     comment_id: <class'str'> (required=True)
     evidence: list[kri.common.models.Evidence] (required=False)
+    hunk_citation: kri.common.models.HunkCitation|None (required=False)
     rejected_examples: list[str] (required=False)
     subsystem_rule: kri.common.models.Rule|None (required=False)
     def has_verified_evidence(self) -> 'bool'
@@ -80,6 +81,13 @@ enum EvidenceSourceType:
     REJECTED_PATCH = 'rejected_patch'
     REVIEW_DISCUSSION = 'review_discussion'
     STATIC_ANALYSIS = 'static_analysis'
+
+model HunkCitation:
+    file: <class'str'> (required=True)
+    line_end: <class'int'> (required=True)
+    line_start: <class'int'> (required=True)
+    patch_id: <class'str'> (required=True)
+    verbatim_lines: list[str] (required=False)
 
 model KernelVersion:
     major: <class'int'> (required=True)

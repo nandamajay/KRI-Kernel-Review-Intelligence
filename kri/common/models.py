@@ -289,6 +289,16 @@ class Evidence(BaseModel):
     )
 
 
+class HunkCitation(BaseModel):
+    """A verbatim code hunk from a patch diff, for maintainer-style "> quoted" blocks."""
+
+    patch_id: str
+    file: str
+    line_start: int = Field(..., ge=1)
+    line_end: int = Field(..., ge=1)
+    verbatim_lines: list[str] = Field(default_factory=list)
+
+
 class EvidenceGraph(BaseModel):
     """The Evidence Graph attached to a single ReviewComment (Blueprint Sec. 15.1).
 
@@ -302,6 +312,7 @@ class EvidenceGraph(BaseModel):
     rejected_examples: list[str] = Field(default_factory=list)
     alternative_recommendation: str | None = None
     alternative_precedents: list[str] = Field(default_factory=list)
+    hunk_citation: HunkCitation | None = None
 
     def has_verified_evidence(self) -> bool:
         """Constitutional gate (Sec. 28): at least one verified Evidence node."""
@@ -435,6 +446,7 @@ __all__ = [
     "ReviewComment",
     "Rule",
     "Evidence",
+    "HunkCitation",
     "EvidenceGraph",
     "ConfidenceFactor",
     "ConfidenceScore",
