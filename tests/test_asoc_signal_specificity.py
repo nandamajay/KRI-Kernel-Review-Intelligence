@@ -179,3 +179,62 @@ index aaa..bbb 100644
     decisions = plugin.evaluate(patch, series)
     assert len(decisions) == 1
     assert decisions[0].category == "asoc-reject-resume-without-cleanup"
+
+
+# ============================================================
+# Sub-commit 3: _first_owned_file preference order
+# ============================================================
+
+
+def test_location_prefers_c_over_kconfig() -> None:
+    """When a patch touches Kconfig + .c, location must report the .c file."""
+    diff = """\
+diff --git a/sound/soc/codecs/test-codec.c b/sound/soc/codecs/test-codec.c
+index aaa..bbb 100644
+--- a/sound/soc/codecs/test-codec.c
++++ b/sound/soc/codecs/test-codec.c
+@@ -50,0 +50,3 @@
++static SOC_ENUM_SINGLE_DECL(tdm_slot_map_enum,
++\tTEST_REG_TDM, 0,
++\ttdm_slot_text);
+"""
+    patch = _make_patch(
+        diff,
+        files=[
+            "sound/soc/codecs/Kconfig",
+            "sound/soc/codecs/Makefile",
+            "sound/soc/codecs/test-codec.c",
+            "sound/soc/codecs/test-codec.h",
+        ],
+    )
+    series = _make_series(patch)
+    plugin = _get_tdm_plugin()
+    decisions = plugin.evaluate(patch, series)
+    assert len(decisions) == 1
+    assert decisions[0].location == "sound/soc/codecs/test-codec.c"
+
+
+def test_location_prefers_h_over_kconfig_when_no_c() -> None:
+    """When a patch touches Kconfig + .h but no .c, location must report .h."""
+    diff = """\
+diff --git a/sound/soc/codecs/test-codec.h b/sound/soc/codecs/test-codec.h
+index aaa..bbb 100644
+--- a/sound/soc/codecs/test-codec.h
++++ b/sound/soc/codecs/test-codec.h
+@@ -50,0 +50,3 @@
++static SOC_ENUM_SINGLE_DECL(tdm_slot_map_enum,
++\tTEST_REG_TDM, 0,
++\ttdm_slot_text);
+"""
+    patch = _make_patch(
+        diff,
+        files=[
+            "sound/soc/codecs/Kconfig",
+            "sound/soc/codecs/test-codec.h",
+        ],
+    )
+    series = _make_series(patch)
+    plugin = _get_tdm_plugin()
+    decisions = plugin.evaluate(patch, series)
+    assert len(decisions) == 1
+    assert decisions[0].location == "sound/soc/codecs/test-codec.h"

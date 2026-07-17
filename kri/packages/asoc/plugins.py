@@ -238,10 +238,30 @@ def _owns(path: str) -> bool:
 
 
 def _first_owned_file(patch: CorePatch) -> str | None:
-    for f in sorted(patch.files_changed):
-        if _owns(f):
-            return f
-    return None
+    """Return the most relevant ASoC-owned file for Decision.location.
+
+    Preference order: .c > .h > Makefile > Kconfig. Within each tier,
+    alphabetical. This prevents Kconfig (which sorts first alphabetically)
+    from being reported as the location when the actual code change is in
+    a .c driver file."""
+    owned = [f for f in patch.files_changed if _owns(f)]
+    if not owned:
+        return None
+
+    def _tier(path: str) -> int:
+        lower = path.lower()
+        if lower.endswith(".c"):
+            return 0
+        if lower.endswith(".h"):
+            return 1
+        if "makefile" in lower:
+            return 2
+        if "kconfig" in lower:
+            return 3
+        return 1  # unknown extensions treated as .h tier
+
+    owned.sort(key=lambda f: (_tier(f), f))
+    return owned[0]
 
 
 def build_reasoning_plugins() -> list[PatternMatchPlugin]:
