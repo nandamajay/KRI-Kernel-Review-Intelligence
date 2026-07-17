@@ -41,15 +41,8 @@ def render_maintainer_comment(decision: Decision) -> str:
             parts.append(f"> {line}")
         parts.append("")
 
-    # 2. Location pointer (with line range from HunkCitation when available)
-    if eg and eg.hunk_citation and decision.location:
-        hunk = eg.hunk_citation
-        if hunk.line_start == hunk.line_end:
-            parts.append(f"At {decision.location}:{hunk.line_start}:")
-        else:
-            parts.append(f"At {decision.location}:{hunk.line_start}-{hunk.line_end}:")
-        parts.append("")
-    elif decision.location:
+    # 2. Location pointer
+    if decision.location:
         parts.append(f"At {decision.location}:")
         parts.append("")
 

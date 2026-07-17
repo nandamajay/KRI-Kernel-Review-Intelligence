@@ -690,29 +690,6 @@ def get_canonical_recommendation(rule_id: str) -> AlternativeRecommendation | No
     return CANONICAL_RECOMMENDATIONS.get(rule_id)
 
 
-# ---------------------------------------------------------------------------
-# Canonical precedents — real upstream commits demonstrating the correct pattern.
-# Each entry is verified via the GitHub API against torvalds/linux.
-# ---------------------------------------------------------------------------
-
-CANONICAL_PRECEDENTS: dict[str, list[str]] = {
-    "asoc-tdm-slot-not-userspace": [
-        '33f917e18f39 ("ASoC: codecs: aw88261: add TDM support")',
-        'ede4d841111a ("ASoC: mediatek: mt8196: support TDM in platform driver")',
-    ],
-    "asoc-resume-must-clean-up": [
-        'ba9ea6b3d282 ("ASoC: mediatek: mt8183: Fix probe resource cleanup")',
-        '44a4b0e62bcb ("ASoC: mediatek: mt8192 probe cleanup")',
-    ],
-    "asoc-use-component-read-write": [],
-}
-
-
-def get_canonical_precedents(rule_id: str) -> list[str]:
-    """Return real upstream commit precedents for a rule, or []."""
-    return CANONICAL_PRECEDENTS.get(rule_id, [])
-
-
 __all__ = [
     "ASOC_ROOT",
     "ASOC_CODECS_ROOT",
@@ -722,13 +699,11 @@ __all__ = [
     "SUPPORT_THRESHOLDS",
     "FILE_PATTERN_MEANINGS",
     "CANONICAL_RECOMMENDATIONS",
-    "CANONICAL_PRECEDENTS",
     "build_rules",
     "build_apis",
     "build_patterns",
     "classify_path",
     "get_canonical_recommendation",
-    "get_canonical_precedents",
     "make_range",
     "VersionRange",
     "EvidenceSourceType",

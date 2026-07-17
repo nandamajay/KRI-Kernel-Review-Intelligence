@@ -52,12 +52,12 @@ def test_precedents_populated_from_accepted_patterns() -> None:
     assert len(graph.alternative_precedents) > 0
 
 
-def test_precedents_from_canonical_for_resume_cleanup() -> None:
-    """gather() returns canonical commit precedents for asoc-resume-must-clean-up."""
+def test_precedents_empty_without_accepted_patterns() -> None:
+    """gather() returns empty alternative_precedents when the rule has no accepted patterns."""
     km = _setup_km_with_dkp()
     engine = EvidenceEngineImpl(km)
 
-    # asoc-resume-must-clean-up now has canonical precedents (real commits)
+    # asoc-resume-must-clean-up only has a "rejected" pattern, no accepted one
     decision = Decision(
         decision_id="test-prec-2",
         series_id="s-1",
@@ -69,9 +69,7 @@ def test_precedents_from_canonical_for_resume_cleanup() -> None:
     )
     graph = engine.gather(decision)
 
-    assert len(graph.alternative_precedents) == 2
-    assert any("ba9ea6b3d282" in p for p in graph.alternative_precedents)
-    assert any("44a4b0e62bcb" in p for p in graph.alternative_precedents)
+    assert graph.alternative_precedents == []
 
 
 def test_confidence_downgraded_without_precedents() -> None:
@@ -136,47 +134,3 @@ def test_confidence_not_downgraded_without_rule() -> None:
 
     # Without rule_id, no penalty => score_no_rule >= score_with_rule
     assert score_no_rule.score >= score_with_rule.score
-
-
-def test_canonical_precedents_preferred_over_graph() -> None:
-    """gather() returns canonical commit references for rules with CANONICAL_PRECEDENTS."""
-    km = _setup_km_with_dkp()
-    engine = EvidenceEngineImpl(km)
-
-    decision = Decision(
-        decision_id="test-prec-canon",
-        series_id="s-1",
-        patch_id="p-1",
-        layer=ReasoningLayer.SEMANTIC,
-        severity=Severity.WARNING,
-        rule_id="asoc-tdm-slot-not-userspace",
-        pattern_id="asoc-reject-userspace-tdm-slot-enum",
-    )
-    graph = engine.gather(decision)
-
-    # Should contain real commit hashes, not concept IDs
-    assert len(graph.alternative_precedents) == 2
-    assert any("33f917e18f39" in p for p in graph.alternative_precedents)
-    assert any("ede4d841111a" in p for p in graph.alternative_precedents)
-    # Must NOT contain concept: prefixed IDs
-    assert not any(p.startswith("concept:") for p in graph.alternative_precedents)
-
-
-def test_canonical_precedents_empty_means_no_precedents() -> None:
-    """A rule with explicitly empty CANONICAL_PRECEDENTS returns []."""
-    km = _setup_km_with_dkp()
-    engine = EvidenceEngineImpl(km)
-
-    decision = Decision(
-        decision_id="test-prec-empty",
-        series_id="s-1",
-        patch_id="p-1",
-        layer=ReasoningLayer.STRUCTURAL,
-        severity=Severity.WARNING,
-        rule_id="asoc-use-component-read-write",
-        pattern_id="asoc-reject-direct-regmap-in-component",
-    )
-    graph = engine.gather(decision)
-
-    # Explicitly empty canonical precedents = no precedents
-    assert graph.alternative_precedents == []

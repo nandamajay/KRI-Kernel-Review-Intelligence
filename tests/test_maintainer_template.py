@@ -48,10 +48,7 @@ def _make_full_decision() -> Decision:
             language="c",
             rationale="devm_ allocation auto-frees on driver detach.",
         ),
-        alternative_precedents=[
-            'ba9ea6b3d282 ("ASoC: mediatek: mt8183: Fix probe resource cleanup")',
-            '44a4b0e62bcb ("ASoC: mediatek: mt8192 probe cleanup")',
-        ],
+        alternative_precedents=["concept:asoc-accept-devm-register-component"],
         subsystem_rule=Rule(
             rule_id="asoc-resume-must-clean-up",
             category="error_paths",
@@ -128,8 +125,8 @@ def test_render_full_maintainer_comment() -> None:
 
     # Hunk quoted with > prefix
     assert "> \tpriv->buf = kzalloc(BUF_SIZE, GFP_KERNEL);" in comment
-    # Location (with line range from HunkCitation: line_start=3, line_end=5)
-    assert "At sound/soc/codecs/test.c:3-5:" in comment
+    # Location
+    assert "At sound/soc/codecs/test.c:" in comment
     # Statement
     assert "Resume handler allocates without cleanup path." in comment
     # Suggested fix block
@@ -137,9 +134,8 @@ def test_render_full_maintainer_comment() -> None:
     assert "```c" in comment
     assert "devm_kzalloc" in comment
     assert "Rationale:" in comment
-    # Precedent (plural — two entries)
-    assert "Precedents:" in comment
-    assert "ba9ea6b3d282" in comment
+    # Precedent
+    assert "Precedent:" in comment
     # Confidence note (below 0.80)
     assert "[Confidence: possible" in comment
     # Evidence reference
@@ -190,80 +186,3 @@ def test_generate_json_format_no_comments() -> None:
     assert "maintainer_comments" not in report
     # But regular decisions are still there
     assert len(report["decisions"]) == 1
-
-
-def test_location_single_line_from_hunk_citation() -> None:
-    """When line_start == line_end, location is 'file:N:'."""
-    eg = EvidenceGraph(
-        comment_id="d-single",
-        hunk_citation=HunkCitation(
-            patch_id="p-1",
-            file="sound/soc/codecs/foo.c",
-            line_start=7,
-            line_end=7,
-            verbatim_lines=["\tret = do_thing();"],
-        ),
-        evidence=[
-            Evidence(
-                evidence_id="ev-sl",
-                source_type=EvidenceSourceType.DOCUMENTATION,
-                summary="Doc reference",
-                provenance=Provenance(repo_path="Documentation/sound/soc/codec.rst"),
-                verified=True,
-                strength=1.0,
-            ),
-        ],
-    )
-    decision = Decision(
-        decision_id="d-single",
-        series_id="s-1",
-        patch_id="p-1",
-        layer=ReasoningLayer.STRUCTURAL,
-        severity=Severity.WARNING,
-        location="sound/soc/codecs/foo.c",
-        statement="Missing error check.",
-        evidence_graph=eg,
-        confidence=ConfidenceScore(
-            score=0.85,
-            level=ConfidenceLevel.LIKELY,
-            explanation="",
-        ),
-    )
-    comment = render_maintainer_comment(decision)
-    assert "At sound/soc/codecs/foo.c:7:" in comment
-
-
-def test_location_no_hunk_falls_back() -> None:
-    """Without HunkCitation, location header has no line number."""
-    eg = EvidenceGraph(
-        comment_id="d-nohunk",
-        evidence=[
-            Evidence(
-                evidence_id="ev-nh",
-                source_type=EvidenceSourceType.DOCUMENTATION,
-                summary="Doc reference",
-                provenance=Provenance(repo_path="Documentation/sound/soc/codec.rst"),
-                verified=True,
-                strength=1.0,
-            ),
-        ],
-    )
-    decision = Decision(
-        decision_id="d-nohunk",
-        series_id="s-1",
-        patch_id="p-1",
-        layer=ReasoningLayer.STRUCTURAL,
-        severity=Severity.INFO,
-        location="sound/soc/codecs/bar.c",
-        statement="Style note.",
-        evidence_graph=eg,
-        confidence=ConfidenceScore(
-            score=0.90,
-            level=ConfidenceLevel.LIKELY,
-            explanation="",
-        ),
-    )
-    comment = render_maintainer_comment(decision)
-    assert "At sound/soc/codecs/bar.c:" in comment
-    # No line numbers in the location
-    assert "bar.c:1" not in comment

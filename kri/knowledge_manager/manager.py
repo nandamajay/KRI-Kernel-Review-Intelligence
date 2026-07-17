@@ -64,7 +64,6 @@ class KnowledgeManagerImpl:
         self._snapshots: dict[str, tuple[dict[str, Any], dict[str, str], int]] = {}
         self._learning_iteration = 0
         self._recommendations: dict[str, AlternativeRecommendation] = {}
-        self._precedents: dict[str, list[str]] = {}
 
     # -- graph access (used by DKP.seed_graph and the Review/Evidence engines) --
     @property
@@ -88,23 +87,6 @@ class KnowledgeManagerImpl:
     def get_recommendation(self, rule_id: str) -> AlternativeRecommendation | None:
         """Retrieve the canonical AlternativeRecommendation for a rule_id, or None."""
         return self._recommendations.get(rule_id)
-
-    def register_precedents(self, precs: dict[str, list[str]]) -> None:
-        """Register canonical precedent commit references keyed by rule_id.
-
-        Called by DKPs during ``seed_graph()`` to populate the precedent
-        lookup table. Idempotent (same rule_id overwrites silently).
-        An explicitly empty list means "no precedents exist for this rule"."""
-        self._precedents.update(precs)
-
-    def get_precedents(self, rule_id: str) -> list[str] | None:
-        """Retrieve the canonical precedent commits for a rule_id.
-
-        Returns None if the rule has no registered entry (fall back to graph),
-        or a list (possibly empty) if explicitly registered."""
-        if rule_id in self._precedents:
-            return self._precedents[rule_id]
-        return None
 
     # -- interface: load_dkp -------------------------------------------------
     def load_dkp(self, domain: str) -> DomainKnowledgePackage:
