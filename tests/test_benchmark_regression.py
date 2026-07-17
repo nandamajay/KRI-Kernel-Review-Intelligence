@@ -29,9 +29,9 @@ from kri.review_engine.engine import ReviewEngineImpl
 
 from .conftest import KERNEL_PATH, LORE_CACHE, MAINTAINERS_PATH
 
-PRECISION_FLOOR = 0.19
+PRECISION_FLOOR = 0.55
 RECALL_FLOOR = 0.95
-F1_FLOOR = 0.22
+F1_FLOOR = 0.70
 
 
 def _run_benchmark_over_cached_fixtures() -> dict[str, Any]:
