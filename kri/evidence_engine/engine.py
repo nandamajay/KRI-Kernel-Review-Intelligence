@@ -313,16 +313,24 @@ class EvidenceEngineImpl:
         return agreeing, disagreeing
 
     def _resolve_precedents(self, decision: Decision) -> list[str]:
-        """Resolve alternative precedents: accepted-outcome examples under the same rule.
+        """Resolve alternative precedents: real upstream commit references for a rule.
 
-        For a decision backed by a rule_id, find all Pattern nodes that GOVERNS
-        connects from that rule, filter for accepted-outcome patterns, and return
-        their EXEMPLIFIES-linked example IDs (real patch/commit references showing
-        the correct approach).
+        Prefers canonical precedents (real verified commit hashes registered by
+        the DKP) over graph-traversal concept IDs. Falls back to the graph
+        traversal when no canonical precedents are registered.
 
         Returns a sorted list of precedent identifiers, or [] if none found."""
         rule_id = decision.rule_id
-        if not rule_id or not self._km.graph.has_node(rule_id):
+        if not rule_id:
+            return []
+
+        # Prefer canonical precedents (real commit references).
+        canonical = self._km.get_precedents(rule_id)
+        if canonical is not None:
+            return sorted(canonical)
+
+        # Fallback: traverse Rule→GOVERNS→Pattern(accepted)→EXEMPLIFIES edges.
+        if not self._km.graph.has_node(rule_id):
             return []
 
         precedents: list[str] = []

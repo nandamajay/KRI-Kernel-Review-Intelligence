@@ -51,6 +51,7 @@ from .knowledge import (
     ASOC_MAINTAINERS,
     ASOC_ROOT,
     ASOC_SUBSYSTEM_ID,
+    CANONICAL_PRECEDENTS,
     CANONICAL_RECOMMENDATIONS,
     build_apis,
     build_patterns,
@@ -259,6 +260,9 @@ class AsocDomainKnowledgePackage:
 
         # Register canonical AlternativeRecommendation entries.
         knowledge_manager.register_recommendations(CANONICAL_RECOMMENDATIONS)
+
+        # Register canonical precedent commit references.
+        knowledge_manager.register_precedents(CANONICAL_PRECEDENTS)
 
     @staticmethod
     def _seed_evidence(
