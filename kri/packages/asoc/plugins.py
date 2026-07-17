@@ -53,13 +53,76 @@ _LAYER_MAP = {
 
 
 def _added_lines(diff: str) -> list[str]:
-    """Return added diff lines (``+`` but not ``+++`` file headers), lower-cased
-    once for signal matching. Deterministic."""
+    """Return added diff lines (``+`` but not ``+++`` file headers), preserving
+    original case. Deterministic."""
     out: list[str] = []
     for line in diff.splitlines():
         if line.startswith("+") and not line.startswith("+++"):
             out.append(line[1:])
     return out
+
+
+def _check_conjunctive_window(
+    adds: list[str],
+    require: list[str],
+    any_of: list[str],
+    window: int = 3,
+) -> bool:
+    """Return True if ALL ``require`` signals AND at least one ``any_of`` signal
+    co-occur within a sliding window of ``window`` consecutive added lines.
+
+    Case-insensitive matching. This is the tightened signal check for rules
+    where disjunctive substring matching produces too many false positives."""
+    if not adds:
+        return False
+    require_lower = [s.lower() for s in require]
+    any_of_lower = [s.lower() for s in any_of]
+    for i in range(len(adds)):
+        end = min(i + window, len(adds))
+        window_text = "\n".join(adds[i:end]).lower()
+        if all(r in window_text for r in require_lower) and any(
+            a in window_text for a in any_of_lower
+        ):
+            return True
+    return False
+
+
+def _check_resume_in_context(
+    adds: list[str],
+    alloc_signals: list[str],
+    window: int = 10,
+) -> bool:
+    """Return True if 'resume' appears in a function-definition context AND
+    an allocation signal co-occurs within ``window`` lines.
+
+    Skips matches where 'resume' only appears in Kconfig help text, comments,
+    or string literals without a function signature nearby."""
+    alloc_lower = [s.lower() for s in alloc_signals]
+    for i, line in enumerate(adds):
+        lower = line.lower()
+        if "resume" not in lower:
+            continue
+        # Skip Kconfig help text (indented description lines) and comments
+        stripped = line.lstrip()
+        if stripped.startswith("*") or stripped.startswith("//"):
+            continue
+        # Must look like function-definition context: contains parentheses or
+        # braces, or matches *_resume / *resume* function signature patterns
+        is_func_context = (
+            "(" in line
+            or "{" in line
+            or "_resume" in lower
+            or "resume(" in lower
+        )
+        if not is_func_context:
+            continue
+        # Check for allocation within window
+        start = max(0, i - window // 2)
+        end = min(len(adds), i + window)
+        window_text = "\n".join(adds[start:end]).lower()
+        if any(a in window_text for a in alloc_lower):
+            return True
+    return False
 
 
 class PatternMatchPlugin:
@@ -73,6 +136,11 @@ class PatternMatchPlugin:
     def __init__(self, pattern: dict[str, Any]) -> None:
         self._p = pattern
         self._signals = [s.lower() for s in pattern.get("signals", [])]
+        self._signal_mode = pattern.get("signal_mode", "disjunctive")
+        self._signal_require = [s.lower() for s in pattern.get("signal_require", [])]
+        self._signal_any_of = [s.lower() for s in pattern.get("signal_any_of", [])]
+        self._signal_window = pattern.get("signal_window", 3)
+        self._skip_kconfig = pattern.get("skip_kconfig", False)
 
     @property
     def plugin_id(self) -> str:
@@ -89,13 +157,28 @@ class PatternMatchPlugin:
 
     def applies(self, patch: CorePatch, series: PatchSeries) -> bool:
         """Cheap guard: the patch must touch an ASoC file (trigger glob) AND, for a
-        rejected-pattern, exhibit at least one signal in its added lines."""
+        rejected-pattern, exhibit matching signals in its added lines."""
         if not any(_owns(f) for f in patch.files_changed):
             return False
+        if self._skip_kconfig and all(
+            "kconfig" in f.lower() or "makefile" in f.lower()
+            for f in patch.files_changed
+            if _owns(f)
+        ):
+            return False
+        adds = _added_lines(patch.diff)
+        if self._signal_mode == "conjunctive_window":
+            return _check_conjunctive_window(
+                adds, self._signal_require, self._signal_any_of, self._signal_window
+            )
+        if self._signal_mode == "resume_context":
+            return _check_resume_in_context(
+                adds, self._signal_any_of, self._signal_window
+            )
         if not self._signals:
             return True
-        adds = "\n".join(_added_lines(patch.diff)).lower()
-        return any(sig in adds for sig in self._signals)
+        adds_text = "\n".join(adds).lower()
+        return any(sig in adds_text for sig in self._signals)
 
     def evaluate(
         self,
@@ -117,9 +200,13 @@ class PatternMatchPlugin:
         if not self.applies(patch, series):
             return []
         adds = _added_lines(patch.diff)
-        matched = sorted({s for s in self._signals if any(s in ln.lower() for ln in adds)})
-        if self._signals and not matched:
-            return []
+        # For structured signal modes, applies() already validated; skip re-check.
+        if self._signal_mode in ("conjunctive_window", "resume_context"):
+            matched = self._signals or self._signal_require + self._signal_any_of
+        else:
+            matched = sorted({s for s in self._signals if any(s in ln.lower() for ln in adds)})
+            if self._signals and not matched:
+                return []
 
         outcome = self._p.get("outcome", "rejected")
         # Only *rejected* patterns become concerns to surface; accepted patterns
