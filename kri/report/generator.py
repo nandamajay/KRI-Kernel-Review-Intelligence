@@ -11,7 +11,7 @@ confidence breakdown), counterfactuals, and learning references.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from kri.common.models import (
     ConfidenceLevel,
@@ -20,6 +20,7 @@ from kri.common.models import (
     ReasoningLayer,
     Severity,
 )
+from kri.report.maintainer_template import render_maintainer_comment
 
 # Type alias for the report dict shape.
 ReviewReport = dict[str, Any]
@@ -52,12 +53,17 @@ class ReportGenerator:
         self,
         decisions: list[Decision],
         series: PatchSeries | None = None,
+        *,
+        format: Literal["json", "maintainer"] = "json",
     ) -> ReviewReport:
         """Produce the full Review Explainability Report dict.
 
         Args:
             decisions: Scored Decision objects from the Review Engine.
             series: Optional PatchSeries for metadata enrichment.
+            format: Output format. "json" (default) returns the structured dict;
+                "maintainer" returns the same dict but with an added
+                "maintainer_comments" list of rendered inline comments.
 
         Returns:
             A JSON-serializable dict conforming to the ReviewReport schema.
@@ -67,7 +73,7 @@ class ReportGenerator:
         publishable = [d for d in sorted_decisions if d.is_publishable()]
         unpublishable = [d for d in sorted_decisions if not d.is_publishable()]
 
-        return {
+        report: ReviewReport = {
             "disclaimer": _SIMULATION_DISCLAIMER,
             "metadata": {
                 "report_version": self._version,
@@ -88,6 +94,18 @@ class ReportGenerator:
             "counterfactuals": [],  # placeholder for MVP
             "learning_references": [],  # placeholder for MVP
         }
+
+        if format == "maintainer":
+            report["maintainer_comments"] = [
+                {
+                    "decision_id": d.decision_id,
+                    "location": d.location,
+                    "comment": render_maintainer_comment(d),
+                }
+                for d in publishable
+            ]
+
+        return report
 
     @staticmethod
     def _format_dropped(decision: Decision) -> dict[str, Any]:
