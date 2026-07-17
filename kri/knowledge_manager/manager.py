@@ -20,6 +20,7 @@ from typing import Any
 
 from kri.common.interfaces import DomainKnowledgePackage
 from kri.common.models import (
+    AlternativeRecommendation,
     Decision,
     Evidence,
     KernelVersion,
@@ -62,6 +63,7 @@ class KnowledgeManagerImpl:
         self._loaded: dict[str, DomainKnowledgePackage] = {}
         self._snapshots: dict[str, tuple[dict[str, Any], dict[str, str], int]] = {}
         self._learning_iteration = 0
+        self._recommendations: dict[str, AlternativeRecommendation] = {}
 
     # -- graph access (used by DKP.seed_graph and the Review/Evidence engines) --
     @property
@@ -72,6 +74,19 @@ class KnowledgeManagerImpl:
     def loaded_domains(self) -> dict[str, str]:
         """domain -> version for every DKP currently loaded (sorted, deterministic)."""
         return {name: dkp.version for name, dkp in sorted(self._loaded.items())}
+
+    def register_recommendations(
+        self, recs: dict[str, AlternativeRecommendation]
+    ) -> None:
+        """Register canonical AlternativeRecommendation entries keyed by rule_id.
+
+        Called by DKPs during ``seed_graph()`` to populate the recommendation
+        lookup table. Idempotent (same rule_id overwrites silently)."""
+        self._recommendations.update(recs)
+
+    def get_recommendation(self, rule_id: str) -> AlternativeRecommendation | None:
+        """Retrieve the canonical AlternativeRecommendation for a rule_id, or None."""
+        return self._recommendations.get(rule_id)
 
     # -- interface: load_dkp -------------------------------------------------
     def load_dkp(self, domain: str) -> DomainKnowledgePackage:

@@ -299,6 +299,14 @@ class HunkCitation(BaseModel):
     verbatim_lines: list[str] = Field(default_factory=list)
 
 
+class AlternativeRecommendation(BaseModel):
+    """Structured corrected-code recommendation for a Decision."""
+
+    snippet: str = Field(..., description="Corrected code snippet")
+    language: str = Field(default="c", description="Language for syntax highlighting")
+    rationale: str = Field(default="", description="Why this is the correct approach")
+
+
 class EvidenceGraph(BaseModel):
     """The Evidence Graph attached to a single ReviewComment (Blueprint Sec. 15.1).
 
@@ -310,7 +318,7 @@ class EvidenceGraph(BaseModel):
     subsystem_rule: Rule | None = None
     accepted_examples: list[str] = Field(default_factory=list)  # patch ids / commit hashes
     rejected_examples: list[str] = Field(default_factory=list)
-    alternative_recommendation: str | None = None
+    alternative_recommendation: AlternativeRecommendation | None = None
     alternative_precedents: list[str] = Field(default_factory=list)
     hunk_citation: HunkCitation | None = None
 
@@ -447,6 +455,7 @@ __all__ = [
     "Rule",
     "Evidence",
     "HunkCitation",
+    "AlternativeRecommendation",
     "EvidenceGraph",
     "ConfidenceFactor",
     "ConfidenceScore",

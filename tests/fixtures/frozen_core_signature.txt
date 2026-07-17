@@ -1,5 +1,10 @@
 === kri.common.models ===
 
+model AlternativeRecommendation:
+    language: <class'str'> (required=False)
+    rationale: <class'str'> (required=False)
+    snippet: <class'str'> (required=True)
+
 enum ConfidenceFactor:
     API_CERTAINTY = 'api_certainty'
     CODE_SIMILARITY = 'code_similarity'
@@ -57,7 +62,7 @@ model Evidence:
 model EvidenceGraph:
     accepted_examples: list[str] (required=False)
     alternative_precedents: list[str] (required=False)
-    alternative_recommendation: str|None (required=False)
+    alternative_recommendation: kri.common.models.AlternativeRecommendation|None (required=False)
     comment_id: <class'str'> (required=True)
     evidence: list[kri.common.models.Evidence] (required=False)
     hunk_citation: kri.common.models.HunkCitation|None (required=False)

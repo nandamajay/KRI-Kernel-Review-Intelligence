@@ -51,6 +51,7 @@ from .knowledge import (
     ASOC_MAINTAINERS,
     ASOC_ROOT,
     ASOC_SUBSYSTEM_ID,
+    CANONICAL_RECOMMENDATIONS,
     build_apis,
     build_patterns,
     build_rules,
@@ -255,6 +256,9 @@ class AsocDomainKnowledgePackage:
             )
             g.add_edge(pid, concept_id, EDGE_EXEMPLIFIES,
                        properties={"outcome": pat["outcome"]}, provenance=pat["provenance"])
+
+        # Register canonical AlternativeRecommendation entries.
+        knowledge_manager.register_recommendations(CANONICAL_RECOMMENDATIONS)
 
     @staticmethod
     def _seed_evidence(

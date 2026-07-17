@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from kri.common.models import (
+    AlternativeRecommendation,
     EvidenceSourceType,
     Provenance,
     Rule,
@@ -571,6 +572,124 @@ def build_patterns() -> list[dict[str, Any]]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Canonical alternative recommendations — per rule_id corrected-code snippets.
+# ---------------------------------------------------------------------------
+
+CANONICAL_RECOMMENDATIONS: dict[str, AlternativeRecommendation] = {
+    "asoc-tdm-slot-not-userspace": AlternativeRecommendation(
+        snippet=(
+            "/* In the machine driver: */\n"
+            "ret = snd_soc_dai_set_tdm_slot(dai, tx_mask, rx_mask,\n"
+            "\t\t\t\t    slots, slot_width);"
+        ),
+        language="c",
+        rationale=(
+            "TDM slot configuration is a system-integration property; expose it "
+            "via set_tdm_slot() in the machine driver or DT properties, not as "
+            "userspace kcontrols."
+        ),
+    ),
+    "asoc-resume-must-clean-up": AlternativeRecommendation(
+        snippet=(
+            "static int codec_resume(struct device *dev)\n"
+            "{\n"
+            "\tstruct priv *p = dev_get_drvdata(dev);\n"
+            "\n"
+            "\t/* Use devres-managed allocation, or free in suspend */\n"
+            "\tp->buf = devm_kzalloc(dev, BUF_SIZE, GFP_KERNEL);\n"
+            "\tif (!p->buf)\n"
+            "\t\treturn -ENOMEM;\n"
+            "\treturn 0;\n"
+            "}"
+        ),
+        language="c",
+        rationale=(
+            "Resources acquired on resume must have matching cleanup on suspend "
+            "or use devm_ allocation so back-to-back cycles cannot leak."
+        ),
+    ),
+    "asoc-use-devm-register-component": AlternativeRecommendation(
+        snippet=(
+            "ret = devm_snd_soc_register_component(&pdev->dev,\n"
+            "\t\t\t\t\t   &codec_drv, dais, n_dais);"
+        ),
+        language="c",
+        rationale=(
+            "devm_ registration auto-unregisters on driver detach, preventing "
+            "leak/unregister bugs on error and remove paths."
+        ),
+    ),
+    "asoc-prefer-regcache-maple": AlternativeRecommendation(
+        snippet=(
+            "static const struct regmap_config codec_regmap = {\n"
+            "\t.cache_type = REGCACHE_MAPLE,\n"
+            "\t/* ... */\n"
+            "};"
+        ),
+        language="c",
+        rationale=(
+            "REGCACHE_MAPLE is the modern, better-performing general-purpose "
+            "regmap cache; new drivers should prefer it over RBTREE/COMPRESSED."
+        ),
+    ),
+    "asoc-use-component-read-write": AlternativeRecommendation(
+        snippet=(
+            "val = snd_soc_component_read(component, REG_ADDR);\n"
+            "snd_soc_component_write(component, REG_ADDR, new_val);"
+        ),
+        language="c",
+        rationale=(
+            "Component read/write route access through the component's "
+            "configured regmap/cache; calling regmap directly bypasses this."
+        ),
+    ),
+    "asoc-kcontrol-put-return-convention": AlternativeRecommendation(
+        snippet=(
+            "static int codec_put_volsw(struct snd_kcontrol *kctl,\n"
+            "\t\t\t   struct snd_ctl_elem_value *uctl)\n"
+            "{\n"
+            "\t/* Return 1 if value changed, 0 if unchanged */\n"
+            "\tif (val != old_val) {\n"
+            "\t\twrite_reg(codec, reg, val);\n"
+            "\t\treturn 1;\n"
+            "\t}\n"
+            "\treturn 0;\n"
+            "}"
+        ),
+        language="c",
+        rationale=(
+            "ALSA control core relies on put() returning 1/0 to decide whether "
+            "to emit a change notification to userspace."
+        ),
+    ),
+    "asoc-pm-runtime-ordering": AlternativeRecommendation(
+        snippet=(
+            "static int codec_probe(struct platform_device *pdev)\n"
+            "{\n"
+            "\tpm_runtime_enable(&pdev->dev);\n"
+            "\tret = devm_snd_soc_register_component(...);\n"
+            "\tif (ret) {\n"
+            "\t\tpm_runtime_disable(&pdev->dev);\n"
+            "\t\treturn ret;\n"
+            "\t}\n"
+            "\treturn 0;\n"
+            "}"
+        ),
+        language="c",
+        rationale=(
+            "pm_runtime_enable() before registration, pm_runtime_disable() on "
+            "error/remove, so runtime PM is never left enabled without a driver."
+        ),
+    ),
+}
+
+
+def get_canonical_recommendation(rule_id: str) -> AlternativeRecommendation | None:
+    """Return the canonical corrected-code recommendation for a rule, or None."""
+    return CANONICAL_RECOMMENDATIONS.get(rule_id)
+
+
 __all__ = [
     "ASOC_ROOT",
     "ASOC_CODECS_ROOT",
@@ -579,10 +698,12 @@ __all__ = [
     "ASOC_MAINTAINERS",
     "SUPPORT_THRESHOLDS",
     "FILE_PATTERN_MEANINGS",
+    "CANONICAL_RECOMMENDATIONS",
     "build_rules",
     "build_apis",
     "build_patterns",
     "classify_path",
+    "get_canonical_recommendation",
     "make_range",
     "VersionRange",
     "EvidenceSourceType",

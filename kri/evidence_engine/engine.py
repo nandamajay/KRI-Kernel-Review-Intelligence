@@ -108,6 +108,12 @@ class EvidenceEngineImpl:
         verified_evidence.sort(key=_sort_key_for_evidence)
         graph.evidence = verified_evidence
 
+        # Populate alternative_recommendation from seeded canonical snippets.
+        if decision.rule_id:
+            rec = self._km.get_recommendation(decision.rule_id)
+            if rec is not None:
+                graph.alternative_recommendation = rec
+
         return graph
 
     def verify(
