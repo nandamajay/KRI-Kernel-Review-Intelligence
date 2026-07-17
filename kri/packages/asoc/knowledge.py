@@ -692,21 +692,30 @@ def get_canonical_recommendation(rule_id: str) -> AlternativeRecommendation | No
 
 # ---------------------------------------------------------------------------
 # Canonical precedents — commit references demonstrating the correct pattern.
-# Each entry MUST be a real upstream commit hash verified via
-# `git -C data/kernel/linux cat-file -e <hash>`.
-# Placeholder concept: strings are pending replacement with real hashes
-# (WP-9.2a-polish-v2 sub-commit 2, human-authored).
+# Each entry is a dict with keys:
+#   "commit_hash":   a real upstream commit hash, verified via
+#                     `git -C data/kernel/linux cat-file -e <hash>`, OR a
+#                     `concept:<name>` placeholder pending real-hash seeding
+#                     (WP-9.2a-polish-v2 sub-commit 2, human-authored).
+#   "expected_path": the file/path-prefix the commit is expected to touch,
+#                     used by the guardrail's mechanical relevance check
+#                     (existence != relevance). Empty string "" for
+#                     placeholder entries — relevance is not checkable
+#                     against a concept: string, so the guardrail skips it.
 # ---------------------------------------------------------------------------
 
-CANONICAL_PRECEDENTS: dict[str, list[str]] = {
+CANONICAL_PRECEDENTS: dict[str, list[dict[str, str]]] = {
     "asoc-tdm-slot-not-userspace": [
-        "concept:asoc-accept-tdm-via-machine-driver",
+        {"commit_hash": "concept:asoc-accept-tdm-via-machine-driver",
+         "expected_path": ""},
     ],
     "asoc-resume-must-clean-up": [
-        "concept:asoc-accept-resume-with-cleanup",
+        {"commit_hash": "concept:asoc-accept-resume-with-cleanup",
+         "expected_path": ""},
     ],
     "asoc-use-component-read-write": [
-        "concept:asoc-accept-component-read-write",
+        {"commit_hash": "concept:asoc-accept-component-read-write",
+         "expected_path": ""},
     ],
 }
 
