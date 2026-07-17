@@ -29,7 +29,7 @@ from kri.review_engine.engine import ReviewEngineImpl
 
 from .conftest import KERNEL_PATH, LORE_CACHE, MAINTAINERS_PATH
 
-PRECISION_FLOOR = 0.13
+PRECISION_FLOOR = 0.19
 RECALL_FLOOR = 0.95
 F1_FLOOR = 0.22
 
