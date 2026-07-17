@@ -54,6 +54,10 @@ _RULE_TYPE_WEIGHT: dict[RuleType, float] = {
 # Epsilon for floating-point weight-sum validation.
 _EPSILON = 1e-6
 
+# Penalty multiplier applied when a rule-backed decision has no alternative
+# precedents (no accepted-pattern examples found in the EKG).
+_NO_PRECEDENT_PENALTY: float = 0.9
+
 
 class ConfidenceEngineImpl:
     """Deterministic, conservative, 8-factor confidence scorer.
@@ -111,6 +115,11 @@ class ConfidenceEngineImpl:
         final_score = sum(
             factor_scores[f] * self._weights[f] for f in ConfidenceFactor
         )
+
+        # Downgrade when a rule-backed decision has no alternative precedents.
+        if decision.rule_id and not evidence_graph.alternative_precedents:
+            final_score *= _NO_PRECEDENT_PENALTY
+
         # Clamp to [0.0, 1.0] for safety (should already be in range).
         final_score = max(0.0, min(1.0, final_score))
 

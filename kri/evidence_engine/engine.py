@@ -26,6 +26,8 @@ from kri.common.models import (
 from kri.evidence_engine.cross_patch_resolver import resolve_symbol_reference
 from kri.knowledge.schema import (
     EDGE_EXEMPLIFIES,
+    EDGE_GOVERNS,
+    NODE_PATTERN,
     NODE_RULE,
 )
 from kri.knowledge_manager.manager import KnowledgeManagerImpl
@@ -97,6 +99,9 @@ class EvidenceEngineImpl:
         accepted, rejected = self._resolve_examples(decision)
         graph.accepted_examples = accepted
         graph.rejected_examples = rejected
+
+        # Populate alternative_precedents from accepted patterns under the same rule.
+        graph.alternative_precedents = self._resolve_precedents(decision)
 
         # Verify each evidence item and sort by priority.
         verified_evidence: list[Evidence] = []
@@ -306,3 +311,48 @@ class EvidenceEngineImpl:
         agreeing.sort()
         disagreeing.sort()
         return agreeing, disagreeing
+
+    def _resolve_precedents(self, decision: Decision) -> list[str]:
+        """Resolve alternative precedents: accepted-outcome examples under the same rule.
+
+        For a decision backed by a rule_id, find all Pattern nodes that GOVERNS
+        connects from that rule, filter for accepted-outcome patterns, and return
+        their EXEMPLIFIES-linked example IDs (real patch/commit references showing
+        the correct approach).
+
+        Returns a sorted list of precedent identifiers, or [] if none found."""
+        rule_id = decision.rule_id
+        if not rule_id or not self._km.graph.has_node(rule_id):
+            return []
+
+        precedents: list[str] = []
+
+        # Rule -[GOVERNS]-> Pattern (out-edges from the rule to patterns).
+        governs_edges = self._km.graph.edges_of(rule_id, EDGE_GOVERNS, direction="out")
+        for edge in governs_edges:
+            pattern_id = edge["dst"]
+            pattern_node = self._km.graph.get_node(pattern_id)
+            if pattern_node is None:
+                continue
+            if pattern_node.get("node_type") != NODE_PATTERN:
+                continue
+            outcome = pattern_node["properties"].get("outcome", "")
+            if outcome != "accepted":
+                continue
+
+            # Accepted pattern found — gather its EXEMPLIFIES targets.
+            exemplifies_edges = self._km.graph.edges_of(
+                pattern_id, EDGE_EXEMPLIFIES, direction="out"
+            )
+            for ex_edge in exemplifies_edges:
+                precedents.append(ex_edge["dst"])
+
+            # Also check IN-direction (Patch -[EXEMPLIFIES]-> Pattern).
+            exemplifies_in = self._km.graph.edges_of(
+                pattern_id, EDGE_EXEMPLIFIES, direction="in"
+            )
+            for ex_edge in exemplifies_in:
+                precedents.append(ex_edge["src"])
+
+        precedents.sort()
+        return precedents
