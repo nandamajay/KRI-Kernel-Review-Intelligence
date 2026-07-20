@@ -1,15 +1,12 @@
-"""WP-9.2a-polish-v2 sub-commit 1: enforce every seeded precedent commit
-hash exists in the upstream kernel tree, and (WP-9.2a-polish-v2 addition 1)
-that a hash which exists is also relevant to the rule it's attached to --
-existence != relevance. This would have caught the fabricated hashes
-reverted in 650540f.
+"""WP-9.2a-polish-v3: enforce every seeded precedent commit hash exists in
+the upstream kernel tree AND is relevant to the rule it's attached to
+(existence != relevance). This guardrail caught the fabricated hashes
+reverted in 650540f and must remain active permanently.
 
-CANONICAL_PRECEDENTS real-hash entries are gated on data/kernel/linux being
-deepened beyond its current --depth 1 grafted state. See
-data/kernel/linux/README.md for the shallow-clone constraint. See
-WP-9.2a-polish-v2 closeout notes for the fabrication-avoidance policy.
-xfail_strict is enabled (pyproject.toml) to force the xfail-removal
-conversation on the first real hash that passes cat-file -e.
+All CANONICAL_PRECEDENTS entries are now real, verified upstream commits
+(WP-9.2a-polish-v3, 2026-07-20). The placeholder concept: strings and
+their associated xfail/trip-wire tests have been removed per the migration
+protocol documented in WP-9.2a-polish-v2 closeout notes.
 """
 from __future__ import annotations
 
@@ -26,13 +23,14 @@ _HASH_RE = re.compile(r"^[a-f0-9]{7,40}$")
 
 
 def _kernel_path() -> Path | None:
-    # Mirror conftest.py's KERNEL_PATH derivation
     workspace_root = Path(__file__).resolve().parents[2]
     p = workspace_root / "data" / "kernel" / "linux"
     return p if p.exists() else None
 
 
 def test_every_seeded_precedent_hash_exists_in_kernel_tree() -> None:
+    """Every CANONICAL_PRECEDENTS entry must be a real commit that exists in
+    the kernel tree AND touches the declared expected_path."""
     kernel = _kernel_path()
     if kernel is None:
         pytest.skip("kernel clone not present at data/kernel/linux")
@@ -61,11 +59,6 @@ def test_every_seeded_precedent_hash_exists_in_kernel_tree() -> None:
                 )
                 continue
 
-            # Mechanical relevance check (existence != relevance). Placeholder
-            # entries (expected_path == "") are not checkable this way and are
-            # skipped -- by construction a "concept:" placeholder never
-            # matches _HASH_RE above, so in practice this branch is only ever
-            # reached by real, hash-shaped entries.
             if not expected_path:
                 continue
 
@@ -80,17 +73,8 @@ def test_every_seeded_precedent_hash_exists_in_kernel_tree() -> None:
                     f"Precedent hash {commit_hash} for rule {rule_id} exists but "
                     f"touches {actual_files}, none of which start with "
                     f"expected_path {expected_path!r}. This is the 'existence ≠ "
-                    f"relevance' gap -- the hash is real but wrong for this rule. "
-                    f"See WP-9.2a-polish-v2 closeout notes."
+                    f"relevance' gap -- the hash is real but wrong for this rule."
                 )
-
-    if failures:
-        pytest.xfail(
-            reason=(
-                "Placeholder concept: strings pending replacement in "
-                "sub-commit 2 (human-authored real precedents)"
-            )
-        )
 
     assert not failures, (
         "Seeded precedents contain nonexistent or irrelevant commit hashes:\n"
@@ -106,37 +90,3 @@ def test_hash_regex_matches_expected_shape() -> None:
     assert _HASH_RE.match("abc1234def567") is not None
     assert _HASH_RE.match("concept:asoc-accept-tdm-via-machine-driver") is None
     assert _HASH_RE.match("") is None
-
-
-def test_no_silent_placeholder_to_real_migration() -> None:
-    """Trip-wire for the placeholder -> real-hash transition.
-
-    xfail_strict (pyproject.toml) only instruments *declarative*
-    ``@pytest.mark.xfail`` markers -- it has no effect on
-    ``test_every_seeded_precedent_hash_exists_in_kernel_tree``, which calls
-    ``pytest.xfail()`` imperatively and only when failures are found. Once
-    every entry in CANONICAL_PRECEDENTS is a real, relevant hash, that test
-    falls through to a plain PASS with no xfail marker involved -- silent,
-    easy to miss in CI output.
-
-    This test is the independent signal: it fails loudly the moment NO
-    placeholder ``concept:`` entries remain, forcing a human to consciously
-    remove the ``pytest.xfail()`` gate in the sibling test rather than
-    letting a placeholder->real migration go unnoticed. See
-    WP-9.2a-polish-v2 closeout notes (Step 3 smoke test).
-    """
-    has_placeholder = any(
-        entry["commit_hash"].startswith("concept:")
-        for precedents in CANONICAL_PRECEDENTS.values()
-        for entry in precedents
-    )
-    assert has_placeholder, (
-        "CANONICAL_PRECEDENTS no longer contains any 'concept:' placeholder "
-        "entries -- every entry has apparently been migrated to a real, "
-        "verified commit hash. This is exactly the moment the xfail() gate "
-        "in test_every_seeded_precedent_hash_exists_in_kernel_tree must be "
-        "removed (per WP-9.2a-polish-v2 sub-commit 2). Do not silence this "
-        "test by re-adding a placeholder -- delete this test and the "
-        "pytest.xfail() call together once the migration is real and "
-        "reviewed."
-    )

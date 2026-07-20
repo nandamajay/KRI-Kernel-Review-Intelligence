@@ -78,10 +78,10 @@ recall >= 0.95, F1 >= 0.70) were not modified.
 
 ## Test suite (v7.2-rc3 baseline)
 
-- Full suite: 147 passed, 1 xfailed (unchanged from prior baselines)
+- Full suite: 147 passed (unchanged from prior baselines)
 - Frozen-core signature: PASS
-- CANONICAL_PRECEDENTS guardrail: 2 passed, 1 xfailed (expected — concept
-  placeholders pending real-hash seeding)
+- CANONICAL_PRECEDENTS guardrail: 2 passed (real hashes verified via
+  `git cat-file -e` + path relevance check)
 
 ## ASoC rule citation verification (v7.2-rc3)
 
@@ -105,8 +105,9 @@ operations regardless of HEAD position:
 - `git show --name-only --format="" <hash>` — mechanical relevance check
 - `git log --follow -- <path>` — file rename history for precedent discovery
 
-CANONICAL_PRECEDENTS remains at `concept:` placeholders pending human-authored
-real-hash seeding in a follow-up WP.
+CANONICAL_PRECEDENTS has been seeded with real, verified upstream commits
+(WP-9.2a-polish-v3, 2026-07-20). The placeholder `concept:` strings have been
+replaced and all associated xfail/trip-wire test scaffolding removed.
 
 ## MAINTAINERS changes (v7.2-rc3 vs v7.1.3)
 
@@ -117,6 +118,6 @@ Brown). The mailing list remains `linux-sound@vger.kernel.org` (changed from
 ## References
 
 - WP-KERNEL-REFRESH (this work package)
-- Unblocks: WP-9.2a-polish-v3 (real precedent seeding)
+- Completes: WP-9.2a-polish-v3 (real precedent seeding)
 - Prior context: revert 650540f (fabricated hashes), guardrail a60ef43
 - Analysis: docs/KERNEL_TREE_USAGE_ANALYSIS.md

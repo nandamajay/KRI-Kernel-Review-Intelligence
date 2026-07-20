@@ -706,16 +706,22 @@ def get_canonical_recommendation(rule_id: str) -> AlternativeRecommendation | No
 
 CANONICAL_PRECEDENTS: dict[str, list[dict[str, str]]] = {
     "asoc-tdm-slot-not-userspace": [
-        {"commit_hash": "concept:asoc-accept-tdm-via-machine-driver",
-         "expected_path": ""},
+        {
+            "commit_hash": "484c997e03cec04da6f69c2c17e854b22aa0f98f",
+            "expected_path": "sound/soc/sdw_utils/",
+        },
     ],
     "asoc-resume-must-clean-up": [
-        {"commit_hash": "concept:asoc-accept-resume-with-cleanup",
-         "expected_path": ""},
+        {
+            "commit_hash": "fef1f756155c30511397bbcd9d55640ab2e44d99",
+            "expected_path": "sound/soc/codecs/",
+        },
     ],
     "asoc-use-component-read-write": [
-        {"commit_hash": "concept:asoc-accept-component-read-write",
-         "expected_path": ""},
+        {
+            "commit_hash": "1f5cdb6ab45e1c06ae0953609acbb52f8946b3e8",
+            "expected_path": "sound/soc/codecs/",
+        },
     ],
 }
 
