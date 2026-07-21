@@ -377,6 +377,16 @@ button{padding:0.6rem 1.5rem;border:none;border-radius:4px;cursor:pointer;font-s
 .evidence{font-size:0.85rem;color:#2c3e50;margin:0.2rem 0 0.2rem 1rem}
 pre{background:#2c3e50;color:#ecf0f1;padding:1rem;border-radius:6px;overflow:auto;max-height:400px;font-size:0.85rem}
 .disclaimer{background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:0.8rem;margin:1rem 0;font-size:0.9rem}
+.review-mode-badge{display:inline-block;padding:0.3rem 0.8rem;border-radius:12px;font-size:0.8rem;font-weight:700;letter-spacing:0.03em;cursor:help}
+.badge-rulebased{background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7}
+.badge-llm{background:#f3e5f5;color:#6a1b9a;border:1px solid #ce93d8}
+.code-context{background:#1e1e1e;color:#d4d4d4;padding:0.8rem;border-radius:4px;font-family:'Fira Code',monospace;font-size:0.82rem;margin:0.5rem 0;border-left:3px solid #569cd6;overflow-x:auto;white-space:pre}
+.why-section{background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;padding:0.8rem;margin:0.5rem 0;font-size:0.9rem;line-height:1.5}
+.finding-card{border:1px solid #ddd;border-radius:6px;padding:1rem;margin:0.8rem 0;background:#f9f9f9}
+.finding-location{font-family:monospace;font-size:0.85rem;color:#495057;margin-bottom:0.4rem}
+.severity-blocker{border-left:4px solid #e74c3c}
+.severity-warning{border-left:4px solid #f39c12}
+.severity-info{border-left:4px solid #3498db}
 </style></head><body>
 <h1>KRI — Kernel Review Intelligence</h1>
 <p>Submit a lore message-id, URL, or paste raw mbox text for AI-simulated maintainer review.</p>
@@ -409,7 +419,6 @@ pre{background:#2c3e50;color:#ecf0f1;padding:1rem;border-radius:6px;overflow:aut
 <script>
 function getRef(){
   let ref=document.getElementById('ref').value.trim();
-  // Extract message-id from full lore URL
   if(ref.includes('lore.kernel.org')){
     const m=ref.match(/lore\\.kernel\\.org\\/[^/]+\\/([^/]+)/);
     if(m) ref=m[1];
@@ -419,6 +428,13 @@ function getRef(){
 function setStatus(msg){document.getElementById('status').textContent=msg}
 function setButtons(disabled){
   document.querySelectorAll('button').forEach(b=>b.disabled=disabled);
+}
+
+const MODE_TOOLTIP='This review is generated from patch text only. Patch application, static analysis, and build validation are not currently part of the review.';
+
+function modeBadge(mode){
+  if(mode==='llm') return `<span class="review-mode-badge badge-llm" title="${MODE_TOOLTIP}">LLM PATCH REVIEW</span>`;
+  return `<span class="review-mode-badge badge-rulebased" title="${MODE_TOOLTIP}">RULE-BASED PATCH REVIEW</span>`;
 }
 
 async function submitSeries(){
@@ -464,13 +480,14 @@ function renderSeries(s){
   return `<div class="result-section">
     <h2>Patch Series: ${esc(s.series_title||s.series_id)}</h2>
     <p><b>Patches:</b> ${(s.patches||[]).length} | <b>Series ID:</b> <code>${esc(s.series_id)}</code></p>
-    ${(s.patches||[]).map(p=>`<div style="margin:0.3rem 0">• ${esc(p.subject||p.patch_id)}</div>`).join('')}
+    ${(s.patches||[]).map(p=>`<div style="margin:0.3rem 0">&bull; ${esc(p.subject||p.patch_id)}</div>`).join('')}
   </div>`;
 }
 
 function renderReport(r){
   let html=`<div class="disclaimer">${esc(r.disclaimer)}</div>`;
   html+=`<div class="result-section"><h2>Review: ${esc(r.metadata.series_title)}</h2>
+    <p>${modeBadge('rulebased')}</p>
     <p><b>Decisions:</b> ${r.metadata.total_decisions} |
     <b>Publishable:</b> ${r.metadata.publishable_decisions} |
     <b>Domain:</b> ${esc(r.metadata.dkp_name||'none')}</p></div>`;
@@ -479,26 +496,31 @@ function renderReport(r){
     const score=((d.confidence?.score||0)*100).toFixed(1);
     const color=pub?'#27ae60':'#e74c3c';
     html+=`<div class="decision ${pub?'publishable':'unpublishable'}">
-      <h3>${esc(d.what||d.category)}</h3>
-      <p><b>Layer:</b> ${d.layer} | <b>Severity:</b> ${d.severity} | <b>Publishable:</b> ${pub?'Yes':'No'}</p>
+      <h3>${esc(d.what||d.category)}</h3>`;
+    if(d.where) html+=`<p class="finding-location">${esc(d.where)}</p>`;
+    html+=`<p><b>Layer:</b> ${d.layer} | <b>Severity:</b> ${d.severity} | <b>Publishable:</b> ${pub?'Yes':'No'}</p>
       <p><b>Confidence:</b> ${score}% (${d.confidence?.level||'?'})</p>
       <div class="confidence-bar"><div class="confidence-fill" style="width:${score}%;background:${color}"></div></div>`;
-    if(d.confidence?.factor_scores){
-      html+=`<p style="margin-top:0.5rem"><b>Factor breakdown:</b></p>`;
-      for(const[f,s]of Object.entries(d.confidence.factor_scores)){
-        if(s>0){
-          const w=d.confidence.factor_weights?.[f]||0;
-          html+=`<div class="factor">${f}: ${(s*100).toFixed(0)}% × ${w.toFixed(2)} = ${(s*w*100).toFixed(1)}%</div>`;
-        }
+    if(d.why){
+      html+=`<details style="margin:0.5rem 0"><summary><b>Why does KRI think this is a problem?</b></summary>
+        <div class="why-section">${esc(d.why)}</div></details>`;
+    }
+    if(d.confidence?.factors){
+      html+=`<details style="margin:0.5rem 0"><summary><b>Factor breakdown</b></summary><div style="padding:0.4rem">`;
+      for(const[f,s]of Object.entries(d.confidence.factors)){
+        if(s>0) html+=`<div class="factor">${f}: ${(s*100).toFixed(0)}%</div>`;
       }
+      if(d.confidence.explanation) html+=`<p class="factor" style="margin-top:0.4rem"><em>${esc(d.confidence.explanation)}</em></p>`;
+      html+=`</div></details>`;
     }
     if(d.evidence_graph&&d.evidence_graph.items&&d.evidence_graph.items.length){
-      html+=`<p style="margin-top:0.5rem"><b>Evidence (${d.evidence_graph.verified_count}/${d.evidence_graph.evidence_count} verified):</b></p>`;
+      html+=`<details style="margin:0.5rem 0"><summary><b>Evidence (${d.evidence_graph.verified_count}/${d.evidence_graph.evidence_count} verified)</b></summary><div style="padding:0.4rem">`;
       for(const e of d.evidence_graph.items){
         const url=e.source_url||e.repo_path||'';
         const link=url.startsWith('http')?`<a href="${esc(url)}" target="_blank">${esc(url)}</a>`:esc(url);
-        html+=`<div class="evidence">[${e.verified?'✓':'✗'}] ${esc(e.summary||'')} — ${link}</div>`;
+        html+=`<div class="evidence">[${e.verified?'&#10003;':'&#10007;'}] ${esc(e.summary||'')} &mdash; ${link}</div>`;
       }
+      html+=`</div></details>`;
     }
     html+=`</div>`;
   }
@@ -528,6 +550,7 @@ async function submitIntelligent(){
 function renderIntelligent(r){
   let html=`<div class="disclaimer">${esc(r.disclaimer)}</div>`;
   html+=`<div class="result-section"><h2>Intelligent Review: ${esc(r.series_title)}</h2>`;
+  html+=`<p>${modeBadge('llm')}</p>`;
   if(r.metadata){
     html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s</p>`;
   }
@@ -546,19 +569,35 @@ function renderIntelligent(r){
     if(pr.inline_comments&&pr.inline_comments.length){
       html+=`<p><b>Issues Found (${pr.inline_comments.length}):</b></p>`;
       for(const c of pr.inline_comments){
-        const sev=c.severity==='blocker'?'#e74c3c':c.severity==='warning'?'#f39c12':'#3498db';
-        html+=`<div class="decision" style="border-left:4px solid ${sev}">
-          <p><b>${esc(c.file_path)}:${c.line_number}</b> [${esc(c.category)}]</p>
-          <p>${esc(c.message)}</p>`;
-        if(c.suggestion)html+=`<pre style="background:#2c3e50;color:#ecf0f1;padding:0.5rem;border-radius:4px;font-size:0.85rem">${esc(c.suggestion)}</pre>`;
-        html+=`<p class="factor">Confidence: ${(c.confidence*100).toFixed(0)}%</p></div>`;
+        const sevClass=c.severity==='blocker'?'severity-blocker':c.severity==='warning'?'severity-warning':'severity-info';
+        html+=`<div class="finding-card ${sevClass}">`;
+        html+=`<p class="finding-location"><b>File:</b> ${esc(c.file_path)}</p>`;
+        html+=`<p class="finding-location"><b>Line:</b> ${c.line_number} &nbsp; <b>Category:</b> ${esc(c.category)} &nbsp; <b>Severity:</b> ${esc(c.severity)}</p>`;
+        if(c.hunk_context){
+          html+=`<div class="code-context">${esc(c.hunk_context)}</div>`;
+        }
+        if(c.upstream_comment){
+          html+=`<details open style="margin:0.5rem 0"><summary><b>Suggested Upstream Review Comment</b></summary>
+            <div style="background:#f8f9fa;border:1px solid #dee2e6;border-left:3px solid #6c757d;border-radius:4px;padding:0.8rem;margin:0.3rem 0;font-size:0.9rem;line-height:1.6;white-space:pre-wrap;font-family:system-ui,sans-serif">${esc(c.upstream_comment)}</div></details>`;
+        }
+        html+=`<p style="margin:0.6rem 0"><b>Technical Analysis:</b> ${esc(c.message)}</p>`;
+        html+=`<p><b>Confidence:</b> ${(c.confidence*100).toFixed(0)}%</p>`;
+        if(c.reasoning){
+          html+=`<details style="margin:0.5rem 0"><summary><b>Why does KRI think this is a problem?</b></summary>
+            <div class="why-section">${esc(c.reasoning)}</div></details>`;
+        }
+        if(c.suggestion){
+          html+=`<details style="margin:0.5rem 0"><summary><b>Possible Fix Direction</b></summary>
+            <pre style="background:#2c3e50;color:#ecf0f1;padding:0.8rem;border-radius:4px;font-size:0.82rem;margin:0.3rem 0">${esc(c.suggestion)}</pre></details>`;
+        }
+        html+=`</div>`;
       }
     }else{
       html+=`<p style="color:#27ae60"><b>No issues found.</b></p>`;
     }
     if(pr.lore_reply){
       html+=`<details style="margin:1rem 0"><summary><b>Lore Email Reply (click to expand)</b></summary>
-        <pre style="white-space:pre-wrap;background:#f9f9f9;border:1px solid #ddd;padding:1rem">${esc(pr.lore_reply)}</pre></details>`;
+        <pre style="white-space:pre-wrap;background:#f9f9f9;color:#1a1a1a;border:1px solid #ddd;padding:1rem">${esc(pr.lore_reply)}</pre></details>`;
     }
     html+=`</div>`;
   }

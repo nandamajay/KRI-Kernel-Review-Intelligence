@@ -14,6 +14,7 @@ from kri.llm.prompts import (
     REVIEW_SUBSYSTEM_PROMPT,
     SUMMARIZE_PATCH_PROMPT,
     SYSTEM_KERNEL_REVIEWER,
+    _upstream_comment_instruction,
     annotate_diff_with_line_numbers,
     build_domain_context,
 )
@@ -79,6 +80,7 @@ class CodeQualityAgent:
             domain_context=self._domain_context,
             commit_message=patch.commit_message[:2000],
             annotated_diff=_truncate_at_line_boundary(annotated, 12000),
+            upstream_comment_instruction=_upstream_comment_instruction(),
         )
         comments: list[InlineComment] = []
         try:
@@ -109,6 +111,7 @@ class CodeQualityAgent:
             severity=_parse_severity(item.get("severity", "warning")),
             message=item.get("message", ""),
             suggestion=item.get("suggestion"),
+            upstream_comment=item.get("upstream_comment"),
             confidence=float(item.get("confidence", 0.5)),
             reasoning=item.get("reasoning", ""),
         )
@@ -130,6 +133,7 @@ class SubsystemExpertAgent:
             commit_message=patch.commit_message[:2000],
             files_changed="\n".join(patch.files_changed),
             annotated_diff=_truncate_at_line_boundary(annotated, 12000),
+            upstream_comment_instruction=_upstream_comment_instruction(),
         )
         comments: list[InlineComment] = []
         try:
@@ -147,6 +151,7 @@ class SubsystemExpertAgent:
                         severity=_parse_severity(item.get("severity", "warning")),
                         message=item.get("message", ""),
                         suggestion=item.get("suggestion"),
+                        upstream_comment=item.get("upstream_comment"),
                         confidence=float(item.get("confidence", 0.5)),
                         reasoning=item.get("reasoning", ""),
                     ))
