@@ -10,7 +10,7 @@ from typing import Any
 from kri.common.models import Patch, PatchSeries, Severity
 from kri.llm.agents import CodeQualityAgent, PatchSummarizerAgent, SubsystemExpertAgent
 from kri.llm.client import LLMClient, LLMConfig, LLMOfflineError
-from kri.llm.formatter import format_lore_reply
+from kri.llm.formatter import extract_hunk_context, format_lore_reply
 from kri.llm.models import (
     AgentReviewOutput,
     InlineComment,
@@ -19,6 +19,7 @@ from kri.llm.models import (
     PatchSummary,
 )
 from kri.llm.prompts import AGGREGATE_REVIEW_PROMPT, SYSTEM_KERNEL_REVIEWER, build_domain_context
+from kri.llm.sanitize import strip_trailers
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,14 @@ class IntelligentReviewEngine:
         # Merge and deduplicate comments
         all_comments = self._merge_comments(agent_outputs)
 
+        # Back-fill hunk_context deterministically — do not rely on LLM to populate it.
+        # The LLM inconsistently fills this field; extract it from the diff instead.
+        diff_lines = patch.diff.split("\n")
+        for comment in all_comments:
+            if not comment.hunk_context:
+                lines = extract_hunk_context(diff_lines, comment.file_path, comment.line_number)
+                comment.hunk_context = "\n".join(lines)
+
         # Generate lore-style reply
         lore_reply = format_lore_reply(patch, summary, all_comments)
 
@@ -164,7 +173,7 @@ class IntelligentReviewEngine:
                 system=SYSTEM_KERNEL_REVIEWER,
                 max_tokens=512,
             )
-            return resp.content.strip()
+            return strip_trailers(resp.content.strip())
         except Exception as e:
             logger.warning("Assessment generation failed: %s", e)
             n_blockers = sum(1 for pr in patch_reviews for c in pr.inline_comments if c.severity == "blocker")

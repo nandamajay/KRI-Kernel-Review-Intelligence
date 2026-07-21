@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from kri.common.models import Severity
+from kri.llm.sanitize import strip_trailers, strip_trailers_list
 
 
 class InlineComment(BaseModel):
@@ -19,8 +20,21 @@ class InlineComment(BaseModel):
     severity: Severity = Severity.INFO
     message: str
     suggestion: str | None = None
+    upstream_comment: str | None = None
     confidence: float = 0.5
     reasoning: str = ""
+
+    @field_validator("message", "reasoning", mode="before")
+    @classmethod
+    def _sanitize_str(cls, v: str) -> str:
+        return strip_trailers(v) if isinstance(v, str) else v
+
+    @field_validator("suggestion", "upstream_comment", mode="before")
+    @classmethod
+    def _sanitize_optional_str(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return strip_trailers(v) if isinstance(v, str) else v
 
 
 class PatchSummary(BaseModel):
@@ -31,6 +45,16 @@ class PatchSummary(BaseModel):
     components_touched: list[str] = Field(default_factory=list)
     change_type: str = ""
     risk_areas: list[str] = Field(default_factory=list)
+
+    @field_validator("what_it_does", mode="before")
+    @classmethod
+    def _sanitize_what(cls, v: str) -> str:
+        return strip_trailers(v) if isinstance(v, str) else v
+
+    @field_validator("risk_areas", mode="before")
+    @classmethod
+    def _sanitize_risks(cls, v: list[str]) -> list[str]:
+        return strip_trailers_list(v) if isinstance(v, list) else v
 
 
 class AgentReviewOutput(BaseModel):
