@@ -64,6 +64,14 @@ def _default_maintainers() -> Path | None:
     return None
 
 
+def _default_kernel_path() -> Path | None:
+    env = os.environ.get("KRI_KERNEL_PATH")
+    if env:
+        return Path(env)
+    candidate = Path(__file__).resolve().parents[3] / "data" / "kernel" / "linux"
+    return candidate if candidate.exists() else None
+
+
 def create_app(
     lore_manager: LoreManagerImpl | None = None,
     patch_manager: PatchManagerImpl | None = None,
@@ -227,9 +235,17 @@ def create_app(
 
         # Run LLM review.
         try:
+            from kri.static_analysis import StaticAnalysisConfig, StaticAnalysisManagerImpl
+
             llm_config = LLMConfig()
             client = LLMClient(llm_config)
-            engine = IntelligentReviewEngine(client=client, dkp=dkp)
+            static_analysis = None
+            kernel_path = _default_kernel_path()
+            if kernel_path:
+                static_analysis = StaticAnalysisManagerImpl(
+                    StaticAnalysisConfig(repo_path=kernel_path)
+                )
+            engine = IntelligentReviewEngine(client=client, dkp=dkp, static_analysis=static_analysis)
             report = engine.review(series)
             return report.model_dump()
         except LLMOfflineError as e:
@@ -552,7 +568,8 @@ function renderIntelligent(r){
   html+=`<div class="result-section"><h2>Intelligent Review: ${esc(r.series_title)}</h2>`;
   html+=`<p>${modeBadge('llm')}</p>`;
   if(r.metadata){
-    html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s</p>`;
+    const cpCount=r.metadata.checkpatch_finding_count||0;
+    html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s | <b>Checkpatch findings:</b> ${cpCount}</p>`;
   }
   if(r.overall_assessment){
     html+=`<div style="background:#f0f7ff;border:1px solid #3498db;border-radius:4px;padding:0.8rem;margin:0.8rem 0">
@@ -565,6 +582,21 @@ function renderIntelligent(r){
       html+=`<p><b>Summary:</b> ${esc(pr.summary.what_it_does)}</p>`;
       if(pr.summary.change_type)html+=`<p><b>Type:</b> ${esc(pr.summary.change_type)} | <b>Subsystem:</b> ${esc(pr.summary.subsystem)}</p>`;
       if(pr.summary.risk_areas&&pr.summary.risk_areas.length)html+=`<p><b>Risks:</b> ${pr.summary.risk_areas.map(esc).join(', ')}</p>`;
+    }
+    const cpFindings=(pr.metadata&&pr.metadata.checkpatch_findings)||[];
+    if(cpFindings.length){
+      html+=`<details style="margin:0.6rem 0"><summary><b>Checkpatch Findings (${cpFindings.length})</b></summary>
+        <div style="padding:0.4rem">`;
+      for(const f of cpFindings){
+        const sevColor=f.severity==='blocker'?'#e74c3c':f.severity==='warning'?'#f39c12':'#3498db';
+        const loc=`${f.file||'?'}:${f.line||'?'}`;
+        html+=`<div style="border-left:3px solid ${sevColor};padding:0.3rem 0.6rem;margin:0.3rem 0;font-family:monospace;font-size:0.85rem">
+          <span style="color:${sevColor};font-weight:700">${esc(f.severity.toUpperCase())}</span>
+          <span style="color:#495057"> ${esc(loc)}</span>
+          <span style="color:#6c757d"> (${esc(f.category)})</span>
+          <span>: ${esc(f.message)}</span></div>`;
+      }
+      html+=`</div></details>`;
     }
     if(pr.inline_comments&&pr.inline_comments.length){
       html+=`<p><b>Issues Found (${pr.inline_comments.length}):</b></p>`;

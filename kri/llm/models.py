@@ -94,3 +94,4 @@ class PatchReview(BaseModel):
     inline_comments: list[InlineComment] = Field(default_factory=list)
     general_comments: list[str] = Field(default_factory=list)
     lore_reply: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)

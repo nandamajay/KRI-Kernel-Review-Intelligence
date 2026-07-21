@@ -162,7 +162,7 @@ Review the following kernel patch for correctness issues. Focus on:
 - Incorrect API usage
 
 {domain_context}
-
+{static_findings}
 ## Commit Message
 {commit_message}
 
@@ -201,7 +201,7 @@ name) unless you can point to an actual rule, doc, or binding it violates. If yo
 cannot cite a concrete convention it breaks, it is not a finding — leave it out.
 
 {domain_context}
-
+{static_findings}
 ## Commit Message
 {commit_message}
 
@@ -312,3 +312,23 @@ def build_domain_context(rules: list | None = None, patterns: list | None = None
             parts.append(f"- [{outcome}] {desc}")
 
     return "\n".join(parts)
+
+
+def format_static_findings(findings: list[dict]) -> str:
+    """Format checkpatch findings as a concise prompt context block.
+
+    Returns an empty string when there are no real findings (degraded-only
+    or empty list) so prompts stay clean when checkpatch is unavailable.
+    """
+    real = [f for f in findings if not f.get("degraded")]
+    if not real:
+        return ""
+    lines = ["## Checkpatch Findings (from scripts/checkpatch.pl --no-tree)"]
+    for f in real[:20]:  # cap at 20 to avoid prompt bloat
+        loc = f"{f.get('file') or '?'}:{f.get('line') or '?'}"
+        sev = f.get("severity", "info").upper()
+        cat = f.get("category", "")
+        msg = f.get("message", "")
+        lines.append(f"- [{sev}] {loc} ({cat}): {msg}")
+    lines.append("")
+    return "\n".join(lines) + "\n"

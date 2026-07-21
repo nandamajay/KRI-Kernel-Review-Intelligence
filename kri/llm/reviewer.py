@@ -32,9 +32,11 @@ class IntelligentReviewEngine:
         client: LLMClient | None = None,
         config: LLMConfig | None = None,
         dkp: Any | None = None,
+        static_analysis: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
+        self._static_analysis = static_analysis
         self._domain_context = ""
         if dkp:
             rules = dkp.rules() if hasattr(dkp, "rules") else None
@@ -54,6 +56,12 @@ class IntelligentReviewEngine:
         full_lore = "\n\n---\n\n".join(pr.lore_reply for pr in patch_reviews if pr.lore_reply)
         elapsed = time.monotonic() - start
 
+        total_checkpatch = sum(
+            len(pr.metadata.get("checkpatch_findings", []))
+            for pr in patch_reviews
+            if pr.metadata
+        )
+
         return IntelligentReport(
             series_id=series.series_id,
             series_title=series.title,
@@ -64,6 +72,7 @@ class IntelligentReviewEngine:
                 "llm_model": self._client._cfg.model,
                 "llm_stats": self._client.stats,
                 "processing_time_seconds": round(elapsed, 1),
+                "checkpatch_finding_count": total_checkpatch,
             },
         )
 
@@ -73,6 +82,14 @@ class IntelligentReviewEngine:
         code_quality = CodeQualityAgent(self._client, self._domain_context)
         subsystem = SubsystemExpertAgent(self._client, self._domain_context)
 
+        # Run checkpatch before agent threads so findings are available as prompt grounding.
+        checkpatch_findings: list[dict] = []
+        if self._static_analysis is not None:
+            try:
+                checkpatch_findings = self._static_analysis.run_checkpatch(patch)
+            except Exception as e:
+                logger.warning("checkpatch failed: %s", e)
+
         summary: PatchSummary | None = None
         agent_outputs: list[AgentReviewOutput] = []
 
@@ -80,8 +97,8 @@ class IntelligentReviewEngine:
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(summarizer.analyze, patch, series): "summarizer",
-                pool.submit(code_quality.review, patch, series): "code_quality",
-                pool.submit(subsystem.review, patch, series): "subsystem",
+                pool.submit(code_quality.review, patch, series, checkpatch_findings): "code_quality",
+                pool.submit(subsystem.review, patch, series, checkpatch_findings): "subsystem",
             }
             for future in as_completed(futures):
                 agent_name = futures[future]
@@ -109,6 +126,7 @@ class IntelligentReviewEngine:
         # Generate lore-style reply
         lore_reply = format_lore_reply(patch, summary, all_comments)
 
+        real_findings = [f for f in checkpatch_findings if not f.get("degraded")]
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
@@ -116,6 +134,7 @@ class IntelligentReviewEngine:
             inline_comments=all_comments,
             general_comments=self._collect_general(agent_outputs),
             lore_reply=lore_reply,
+            metadata={"checkpatch_findings": real_findings} if real_findings else {},
         )
 
     def _merge_comments(self, outputs: list[AgentReviewOutput]) -> list[InlineComment]:
