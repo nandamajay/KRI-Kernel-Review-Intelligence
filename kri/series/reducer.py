@@ -21,6 +21,7 @@ byte-identical to the pre-WP-S1B post-``_merge_comments`` path.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -33,6 +34,22 @@ from kri.series.models import (
 if TYPE_CHECKING:
     from kri.llm.models import InlineComment
 
+
+def _comment_ref(comment: InlineComment) -> str:
+    """Content-derived stable id for a comment within one reduce() call.
+
+    Positional indexes were used in the first R1 draft but became stale
+    the moment any rule reordered the working list. This ref survives
+    reordering: it hashes the message body (truncated) plus file, line,
+    and category, giving a collision-free handle within one per-patch
+    reduce().
+
+    Deterministic (Sec. 40): no time, no rng, no address-of.
+    """
+    payload = f"{comment.file_path}\x00{comment.line_number}\x00{comment.category}\x00{comment.message}"
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).hexdigest()
+    return f"{comment.file_path}:{comment.line_number}:{digest}"
+
 Mode = Literal["off", "shadow", "on"]
 
 # Confidence floor at which a "warning" finding must not be suppressed.
@@ -43,17 +60,19 @@ _WARNING_CONFIDENCE_FLOOR = 0.7
 _SOFT_CATEGORIES = frozenset({"convention", "style", "nit"})
 
 # R1 trigger phrases (readiness spec §5.R1). Match is case-insensitive
-# and substring-based; anchoring to whole words / regex is intentionally
-# NOT done — real reviewer text is prose, not a fixed grammar. The
-# phrase list is kept narrow: every entry is binding-specific so a
-# generic "not documented" comment cannot fire the rule alone.
+# and substring-based. The list is intentionally NARROW: every phrase
+# must be unambiguously negative — a reviewer who writes it is
+# complaining, not praising. Phrases like "no binding document" were
+# considered and dropped because they read comfortably as praise
+# ("foo has no binding document issues"). Keeping the list narrow is
+# the primary defense against false-positive suppression.
 _R1_TRIGGER_PHRASES: tuple[str, ...] = (
-    "no corresponding yaml binding",
-    "no binding document",
     "missing binding",
     "undocumented compatible",
-    "not documented in bindings",
     "no dt binding",
+    "no yaml binding",
+    "not documented in bindings",
+    "binding is missing",
 )
 
 
@@ -215,7 +234,7 @@ class SeriesReducer:
             return []
 
         actions: list[ReducerAction] = []
-        for idx, comment in enumerate(comments):
+        for comment in comments:
             if self._is_safety_floored(comment):
                 continue
 
@@ -252,7 +271,7 @@ class SeriesReducer:
                 ReducerAction(
                     kind=ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS,
                     patch_id=patch_id,
-                    finding_ref=f"{comment.file_path}:{comment.line_number}:{idx}",
+                    finding_ref=_comment_ref(comment),
                     file=comment.file_path,
                     line=comment.line_number,
                     reason=f"declared_by_{declaring_patch}:{matched_symbol}",
@@ -266,20 +285,15 @@ class SeriesReducer:
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        """Drop every comment whose ``file:line:index`` was flagged by
-        :meth:`_evaluate_R1`. Uses index (positional) rather than object
-        identity so a later rule that re-ordered the list would still
-        match — but in the current sequencing R1 runs first, so the
-        list is untouched at this point.
-        """
+        """Drop every comment whose content-derived ref appears in
+        ``actions``. Refs are content-based (see :func:`_comment_ref`)
+        so evaluate/apply stay in sync even if a preceding rule reorders
+        the comment list — a class of bug the positional-index
+        implementation had latent."""
         if not actions:
             return comments
         drop_refs = {a.finding_ref for a in actions}
-        return [
-            c
-            for idx, c in enumerate(comments)
-            if f"{c.file_path}:{c.line_number}:{idx}" not in drop_refs
-        ]
+        return [c for c in comments if _comment_ref(c) not in drop_refs]
 
     def _evaluate_R3(
         self,

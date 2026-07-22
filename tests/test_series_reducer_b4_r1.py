@@ -105,7 +105,7 @@ def test_R1_shadow_matches_declared_compatible_and_records_action_without_mutati
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
     cmt = _cmt(
-        message="no corresponding YAML binding for foo,bar-sndcard",
+        message="missing binding for foo,bar-sndcard",
         category="documentation",
     )
 
@@ -151,7 +151,7 @@ def test_R1_dt_property_match_is_symmetric_to_compatible():
     registry slot per spec §5.R1)."""
     reducer = SeriesReducer()
     ctx = _ctx(dt_properties={"qcom,foo-clk": "p2"})
-    cmt = _cmt(message="no binding document for qcom,foo-clk")
+    cmt = _cmt(message="no yaml binding for qcom,foo-clk")
 
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
@@ -168,7 +168,7 @@ def test_R1_upstream_comment_field_is_also_scanned():
     ctx = _ctx(compatibles={"foo,bar": "p2"})
     cmt = _cmt(
         message="see below",
-        upstream_comment="no corresponding YAML binding for foo,bar",
+        upstream_comment="undocumented compatible foo,bar",
     )
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow"
@@ -200,7 +200,7 @@ def test_R1_trigger_phrase_but_symbol_not_declared_no_action():
     anywhere in the series — R1 must NOT fire (the reviewer is right)."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar": "p2"})
-    cmt = _cmt(message="no corresponding YAML binding for baz,quux")
+    cmt = _cmt(message="missing binding for baz,quux")
 
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
@@ -214,7 +214,7 @@ def test_R1_single_patch_series_is_no_op():
     reducer short-circuits before R1 even runs (see B1 skeleton)."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar": "p1"}, total_patches=1)
-    cmt = _cmt(message="no corresponding YAML binding for foo,bar")
+    cmt = _cmt(message="undocumented compatible foo,bar")
 
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
@@ -301,7 +301,7 @@ def test_R1_case_insensitive_trigger_and_symbol():
     """Trigger phrases and symbol matches are both case-insensitive."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,BarSndCard": "p2"})
-    cmt = _cmt(message="NO CORRESPONDING YAML BINDING for FOO,barsndcard")
+    cmt = _cmt(message="MISSING BINDING for FOO,barsndcard")
 
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow"
@@ -316,7 +316,7 @@ def test_R1_longest_matching_symbol_wins_in_reason():
     which patch owns the binding."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar": "p2", "foo,bar-sndcard": "p3"})
-    cmt = _cmt(message="no corresponding YAML binding for foo,bar-sndcard")
+    cmt = _cmt(message="missing binding for foo,bar-sndcard")
 
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow"
@@ -376,3 +376,42 @@ def test_R1_symbol_declared_by_same_patch_still_suppresses():
     assert result.comments == []
     assert len(result.actions) == 1
     assert result.actions[0].related_patch_id == "p1"
+
+
+# ---------------------------------------------------------------------------
+# False-positive guard (adversarial finding 1)
+# ---------------------------------------------------------------------------
+
+
+def test_R1_positive_binding_comment_not_suppressed():
+    """Adversarial-report finding 1: a phrase like "no binding document
+    issues" reads as praise, not a complaint. Earlier drafts included
+    "no binding document" and "no corresponding yaml binding" as
+    triggers; both were dropped because they fire on positive comments
+    that also mention a declared symbol.  This test locks in that the
+    narrow phrase list refuses to suppress praise text — even when the
+    declared symbol IS cited."""
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
+    # Reads as a positive comment: no rule violation is asserted.
+    praise_a = _cmt(
+        message="foo,bar-sndcard has no binding document issues — clean YAML.",
+        line_number=10,
+    )
+    praise_b = _cmt(
+        message="foo,bar-sndcard: no corresponding YAML binding gap detected.",
+        line_number=11,
+    )
+
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[praise_a, praise_b],
+        series_ctx=ctx,
+        mode="on",
+    )
+    assert result.actions == [], (
+        "R1 fired on a positive comment — phrase list is too broad. "
+        "Drop the ambiguous phrase; the symbol match alone is not a "
+        "sufficient trigger."
+    )
+    assert result.comments == [praise_a, praise_b]
