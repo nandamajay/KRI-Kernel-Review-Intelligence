@@ -203,6 +203,10 @@ class IntelligentReviewEngine:
                     "index": entry.index,
                     "total": entry.total,
                 }
+        if reducer_result.actions:
+            pr_metadata["series_reducer_actions"] = [
+                a.to_metadata() for a in reducer_result.actions
+            ]
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
