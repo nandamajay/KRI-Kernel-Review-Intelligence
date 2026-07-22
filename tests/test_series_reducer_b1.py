@@ -200,11 +200,22 @@ def test_TB1_IDENTITY_shadow_on_none_context_is_noop():
 
 
 def test_TB1_IDENTITY_shadow_on_multi_patch_stub_rules_produce_no_actions():
-    """Rule bodies are stubs in B1 — even with mode='on' and every gate on,
-    zero actions must be produced. This locks the B1 contract."""
+    """Dispatcher contract: with an empty declared_symbols registry
+    (so R1/R3 have nothing to match) and comments crafted to avoid
+    R4's line-bucket clustering (different files) and R4's soft-class
+    (categories 'documentation' and 'bug' — R4 cannot cross those),
+    zero actions must be produced by any active rule.
+
+    Post-B5, R1/R3/R4 have live bodies. This test now asserts the
+    NEGATIVE contract: rules must NOT fire when their preconditions
+    are absent — the older stub-only invariant became stale once R1
+    landed in B4."""
     reducer = SeriesReducer()
     ctx = _ctx(total=3)
-    comments = [_cmt(line=13), _cmt(line=14, category="style")]
+    comments = [
+        _cmt(file_path="drivers/x/foo.c", line=13, category="documentation"),
+        _cmt(file_path="drivers/y/bar.c", line=14, category="bug"),
+    ]
     for mode in ("shadow", "on"):
         r = reducer.reduce(
             "p1",
@@ -215,7 +226,7 @@ def test_TB1_IDENTITY_shadow_on_multi_patch_stub_rules_produce_no_actions():
                    "series_r6_enabled": True,
                    "series_r7_enabled": True},
         )
-        assert r.actions == [], f"B1 stub produced actions in mode={mode!r}"
+        assert r.actions == [], f"rule fired with no matching preconditions in mode={mode!r}"
         # And mutators must not have shortened / reordered the list.
         assert [c.line_number for c in r.comments] == [13, 14]
 

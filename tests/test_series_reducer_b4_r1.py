@@ -390,17 +390,25 @@ def test_R1_positive_binding_comment_not_suppressed():
     triggers; both were dropped because they fire on positive comments
     that also mention a declared symbol.  This test locks in that the
     narrow phrase list refuses to suppress praise text — even when the
-    declared symbol IS cited."""
+    declared symbol IS cited.
+
+    Note: lines and category are chosen so R4 (post-B5) does NOT bucket
+    these two — different line buckets (10 // 10 = 1, 45 // 10 = 4) and
+    a hard category ("documentation") so R4's soft-class merge cannot
+    conflate them either.  This test is scoped to R1's false-positive
+    guard, not R4."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
     # Reads as a positive comment: no rule violation is asserted.
     praise_a = _cmt(
         message="foo,bar-sndcard has no binding document issues — clean YAML.",
         line_number=10,
+        category="documentation",
     )
     praise_b = _cmt(
         message="foo,bar-sndcard: no corresponding YAML binding gap detected.",
-        line_number=11,
+        line_number=45,
+        category="documentation",
     )
 
     result = reducer.reduce(
@@ -409,7 +417,11 @@ def test_R1_positive_binding_comment_not_suppressed():
         series_ctx=ctx,
         mode="on",
     )
-    assert result.actions == [], (
+    r1_actions = [
+        a for a in result.actions
+        if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS
+    ]
+    assert r1_actions == [], (
         "R1 fired on a positive comment — phrase list is too broad. "
         "Drop the ambiguous phrase; the symbol match alone is not a "
         "sufficient trigger."

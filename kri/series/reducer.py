@@ -75,6 +75,30 @@ _R1_TRIGGER_PHRASES: tuple[str, ...] = (
     "binding is missing",
 )
 
+# R3 trigger phrases (readiness spec §5.R3). Same narrow-phrase
+# discipline as R1: every phrase reads only as flagging an external
+# dependency, never as praise. The symbol match against
+# declared_symbols is again the real disambiguator.
+#
+# Adversarial-report finding 1: bare phrases like "another patch" or
+# "external dependency" fire on negations too ("this does NOT depend
+# on the not-yet-merged foo,bar-sndcard patch"). The phrase set below
+# is restricted to assertion forms — a reviewer using these phrases
+# is committing to "this finding is about an outside dependency",
+# which stays true under most negation reshufflings.
+_R3_TRIGGER_PHRASES: tuple[str, ...] = (
+    "depends on the not-yet-merged",
+    "depends on the not yet merged",
+    "depends on a not-yet-merged",
+    "depends on a not yet merged",
+    "waiting on a separate patch",
+    "waiting on another patch",
+    "requires the not-yet-merged",
+    "requires the not yet merged",
+    "not-yet-applied series",
+    "not yet applied series",
+)
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -301,14 +325,97 @@ class SeriesReducer:
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
     ) -> list[ReducerAction]:
-        return []
+        """Trigger R3 for findings that flag an *external* dependency
+        which is actually declared by a sibling patch in this series.
+
+        Two-part gate matching R1's discipline:
+          1. Trigger phrase in message + upstream_comment (case-insensitive).
+          2. Declared-symbol substring hit (longest-symbol-wins).
+
+        Unlike R1, R3 does NOT suppress the finding — it rewrites it to
+        say "Depends on patch <sibling>: <original>". This is a *softer*
+        action, so the safety floor is not consulted: even a blocker
+        gets clearer wording, which never loses information for the
+        maintainer.
+        """
+        registry = series_ctx.declared_symbols
+        if not registry.compatibles and not registry.dt_properties:
+            return []
+
+        actions: list[ReducerAction] = []
+        for comment in comments:
+            haystack_parts = [comment.message or ""]
+            if comment.upstream_comment:
+                haystack_parts.append(comment.upstream_comment)
+            haystack = " ".join(haystack_parts).lower()
+
+            if not any(phrase in haystack for phrase in _R3_TRIGGER_PHRASES):
+                continue
+
+            matched_symbol: str | None = None
+            declaring_patch: str | None = None
+            for sym in sorted(
+                list(registry.compatibles.keys()) + list(registry.dt_properties.keys()),
+                key=len,
+                reverse=True,
+            ):
+                if sym and sym.lower() in haystack:
+                    matched_symbol = sym
+                    declaring_patch = (
+                        registry.compatibles.get(sym)
+                        or registry.dt_properties.get(sym)
+                        or ""
+                    )
+                    break
+
+            if matched_symbol is None:
+                continue
+
+            # Do not re-rewrite an already-rewritten finding. Idempotence
+            # guard against the same reducer being applied twice (e.g.
+            # replay tooling) — the prefix "Depends on patch <pid>: " is
+            # what _apply_R3 emits.
+            already_rewritten = (comment.message or "").lower().startswith(
+                f"depends on patch {declaring_patch or ''}:".lower()
+            )
+            if already_rewritten:
+                continue
+
+            actions.append(
+                ReducerAction(
+                    kind=ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE,
+                    patch_id=patch_id,
+                    finding_ref=_comment_ref(comment),
+                    file=comment.file_path,
+                    line=comment.line_number,
+                    reason=f"declared_by_{declaring_patch}:{matched_symbol}",
+                    related_patch_id=declaring_patch or "",
+                )
+            )
+        return actions
 
     def _apply_R3(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        """Rewrite matched comments' ``message`` to name the declaring
+        sibling patch. Returns a NEW list of comments (via
+        ``model_copy``) so the input list is not mutated in place —
+        matters if a caller retained a reference to it."""
+        if not actions:
+            return comments
+        rewrites: dict[str, str] = {a.finding_ref: a.related_patch_id for a in actions}
+        out: list[InlineComment] = []
+        for c in comments:
+            ref = _comment_ref(c)
+            sibling = rewrites.get(ref)
+            if sibling:
+                new_msg = f"Depends on patch {sibling}: {c.message}"
+                out.append(c.model_copy(update={"message": new_msg}))
+            else:
+                out.append(c)
+        return out
 
     def _evaluate_R4(
         self,
@@ -316,14 +423,98 @@ class SeriesReducer:
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
     ) -> list[ReducerAction]:
-        return []
+        """Cluster findings by ``(file, line // 10, category-class)`` and
+        emit one merge action per cluster of size ≥ 2.
+
+        Design points:
+          - Safety-floored findings (blockers, high-conf warnings) are
+            EXCLUDED from bucketing entirely — they never absorb siblings
+            and never get absorbed. Merging them would either delete a
+            blocker (forbidden) or hide siblings behind one (info loss).
+          - "Category-class" collapses ``{convention, style, nit}`` to a
+            single bucket via ``_same_category`` — spec §6.4 permits
+            cross-soft merging.
+          - Keeper = max confidence within bucket. Ties broken by input
+            order (stable sort).
+          - Bucketing preserves input order so audit output is
+            deterministic across replays.
+        """
+        buckets: dict[tuple[str, int, str], list[InlineComment]] = {}
+        for comment in comments:
+            if self._is_safety_floored(comment):
+                continue
+            cat_class = "_soft" if comment.category in _SOFT_CATEGORIES else comment.category
+            key = (comment.file_path, comment.line_number // 10, cat_class)
+            buckets.setdefault(key, []).append(comment)
+
+        actions: list[ReducerAction] = []
+        for cluster in buckets.values():
+            if len(cluster) < 2:
+                continue
+            # Stable sort: max confidence first, ties preserve input order.
+            ordered = sorted(cluster, key=lambda c: -c.confidence)
+            keeper = ordered[0]
+            absorbed = ordered[1:]
+            actions.append(
+                ReducerAction(
+                    kind=ReducerActionKind.R4_LINE_BUCKET_MERGE,
+                    patch_id=patch_id,
+                    finding_ref=_comment_ref(keeper),
+                    file=keeper.file_path,
+                    line=keeper.line_number,
+                    reason=f"cluster_size={len(cluster)}",
+                    absorbed_refs=tuple(_comment_ref(a) for a in absorbed),
+                    related_patch_id="",
+                )
+            )
+        return actions
 
     def _apply_R4(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        """Fold absorbed siblings into their keeper's message and drop
+        them from the list.  New list is returned; original inputs are
+        not mutated."""
+        if not actions:
+            return comments
+
+        keeper_updates: dict[str, list[str]] = {}
+        drop_refs: set[str] = set()
+        for a in actions:
+            drop_refs.update(a.absorbed_refs)
+            # setdefault (NOT bare assign) so two actions targeting the
+            # same keeper — invariant-forbidden today but not enforced
+            # in code — accumulate their snippets instead of the second
+            # action clobbering the first's list.
+            keeper_updates.setdefault(a.finding_ref, [])
+
+        # Build a ref → comment map once so we can pull the absorbed
+        # texts to compose the "Related remark:" tail on each keeper.
+        ref_to_cmt = {_comment_ref(c): c for c in comments}
+
+        for a in actions:
+            for absorbed_ref in a.absorbed_refs:
+                absorbed = ref_to_cmt.get(absorbed_ref)
+                if absorbed is None:
+                    continue
+                snippet = absorbed.upstream_comment or absorbed.message or ""
+                if snippet:
+                    keeper_updates[a.finding_ref].append(snippet)
+
+        out: list[InlineComment] = []
+        for c in comments:
+            ref = _comment_ref(c)
+            if ref in drop_refs:
+                continue
+            snippets = keeper_updates.get(ref)
+            if snippets:
+                tail = "".join(f"\nRelated remark: {s}" for s in snippets)
+                out.append(c.model_copy(update={"message": (c.message or "") + tail}))
+            else:
+                out.append(c)
+        return out
 
     def _evaluate_R5(
         self,
