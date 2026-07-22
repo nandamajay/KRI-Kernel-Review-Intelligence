@@ -84,11 +84,31 @@ class SeriesReviewContext:
 
 @dataclass(frozen=True)
 class SeriesProvenance:
-    """Reducer-touched-finding audit hook (populated by WP-S1B; unused in WP-S1A)."""
+    """Reducer-touched-finding audit hook (populated by WP-S1B; unused in WP-S1A).
+
+    WP-S1B / B2: this is the value type stored on
+    :attr:`kri.llm.models.InlineComment.series_provenance`. Its
+    :meth:`to_metadata` return shape is stable and deterministic (fields
+    sorted by name at construction) so Pydantic serialization of an
+    ``InlineComment`` is byte-identical across runs.
+    """
 
     depends_on_patches: tuple[str, ...] = ()
     absorbed_from: tuple[str, ...] = ()
     suppressed_alternatives: tuple[str, ...] = ()
+
+    def to_metadata(self) -> dict:
+        """Deterministic dict view suitable for Pydantic serialization.
+
+        Field order in the returned dict follows sorted attribute names
+        for cross-version byte-stability. Every tuple is materialized as
+        a list because JSON has no tuple type.
+        """
+        return {
+            "absorbed_from": list(self.absorbed_from),
+            "depends_on_patches": list(self.depends_on_patches),
+            "suppressed_alternatives": list(self.suppressed_alternatives),
+        }
 
 
 class ReducerActionKind(str, Enum):

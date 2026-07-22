@@ -2,16 +2,46 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PlainSerializer, field_validator
 
 from kri.common.models import Severity
 from kri.llm.sanitize import strip_trailers, strip_trailers_list
+from kri.series.models import SeriesProvenance
+
+
+def _serialize_series_provenance(v: SeriesProvenance) -> dict:
+    """PlainSerializer target for :attr:`InlineComment.series_provenance`.
+
+    ``when_used='unless-none'`` on the annotation means this function is
+    never called for ``None`` values, so Pydantic's built-in default
+    detection still fires and ``exclude_defaults=True`` correctly drops
+    the key. See SM13-B for the invariant this preserves.
+    """
+    return v.to_metadata()
+
+
+_SeriesProvenanceField = Annotated[
+    SeriesProvenance | None,
+    PlainSerializer(
+        _serialize_series_provenance,
+        return_type=dict,
+        when_used="unless-none",
+    ),
+]
 
 
 class InlineComment(BaseModel):
-    """A review comment targeting a specific location in the diff."""
+    """A review comment targeting a specific location in the diff.
+
+    WP-S1B / B2: adds two reducer-audit fields (``series_prefix`` and
+    ``series_provenance``). Both are defaulted so pre-B2 JSON payloads
+    deserialize unchanged. ``series_provenance`` serializes through
+    :meth:`SeriesProvenance.to_metadata` for deterministic key order
+    when populated, and drops out of ``exclude_defaults=True`` dumps
+    when at its default ``None``.
+    """
 
     file_path: str
     line_number: int
@@ -23,6 +53,10 @@ class InlineComment(BaseModel):
     upstream_comment: str | None = None
     confidence: float = 0.5
     reasoning: str = ""
+    series_prefix: str = ""
+    series_provenance: _SeriesProvenanceField = None
+
+    model_config = {"arbitrary_types_allowed": True}
 
     @field_validator("message", "reasoning", mode="before")
     @classmethod
@@ -35,6 +69,22 @@ class InlineComment(BaseModel):
         if v is None:
             return v
         return strip_trailers(v) if isinstance(v, str) else v
+
+    @field_validator("series_provenance", mode="before")
+    @classmethod
+    def _coerce_series_provenance(cls, v: Any) -> SeriesProvenance | None:
+        """Accept dict inputs (SM13-A: pre-B2 JSON round-trip) and
+        materialise a frozen ``SeriesProvenance`` from them. ``None`` and
+        an already-constructed ``SeriesProvenance`` pass through."""
+        if v is None or isinstance(v, SeriesProvenance):
+            return v
+        if isinstance(v, dict):
+            return SeriesProvenance(
+                depends_on_patches=tuple(v.get("depends_on_patches", ())),
+                absorbed_from=tuple(v.get("absorbed_from", ())),
+                suppressed_alternatives=tuple(v.get("suppressed_alternatives", ())),
+            )
+        return v
 
 
 class PatchSummary(BaseModel):

@@ -22,14 +22,16 @@ byte-identical to the pre-WP-S1B post-``_merge_comments`` path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from kri.llm.models import InlineComment
 from kri.series.models import (
     ReducerAction,
     ReducerActionKind,
     SeriesReviewContext,
 )
+
+if TYPE_CHECKING:
+    from kri.llm.models import InlineComment
 
 Mode = Literal["off", "shadow", "on"]
 

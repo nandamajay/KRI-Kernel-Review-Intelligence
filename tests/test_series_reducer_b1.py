@@ -303,6 +303,18 @@ def test_TB1_OFF_MODE_default_is_byte_identical_to_no_reducer_path():
     for call in strict.reduce.call_args_list:
         assert call.kwargs["mode"] == "off"
 
+    # B2 addendum: with mode='off', the two reducer-audit fields on every
+    # emitted comment MUST equal their exact defaults. This is the wire-
+    # format half of the "no reducer observable effects" contract.
+    for pr in r_default.patches:
+        for c in pr.inline_comments:
+            assert c.series_prefix == "", (
+                f"OFF-mode leaked non-default series_prefix={c.series_prefix!r}"
+            )
+            assert c.series_provenance is None, (
+                f"OFF-mode leaked non-default series_provenance={c.series_provenance!r}"
+            )
+
 
 def test_TB1_OFF_MODE_off_matches_series_awareness_off_findings_shape():
     """Byte-identity vs. the WP-S1A path is defined relative to
