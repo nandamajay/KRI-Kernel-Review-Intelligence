@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -70,6 +70,76 @@ def _default_kernel_path() -> Path | None:
         return Path(env)
     candidate = Path(__file__).resolve().parents[3] / "data" / "kernel" / "linux"
     return candidate if candidate.exists() else None
+
+
+# ---------------------------------------------------------------------------
+# WP-S1B / B3 — env-var exposure of series-reducer knobs.
+#
+# The web app is KRI's only entry-point (there is no CLI); flag exposure
+# follows the same env-var convention as ``KRI_LORE_CACHE`` /
+# ``KRI_KERNEL_PATH``. Reads happen at REQUEST time (not import time) so
+# an operator can flip a flag without restarting the process, and tests
+# can monkeypatch ``os.environ`` cleanly.
+#
+# Two orthogonal axes:
+#   * ``KRI_SERIES_REDUCER_MODE`` is an *enum* string ∈ {off, shadow, on}.
+#     Invalid values are a config bug — the route MUST fail loud (HTTP
+#     400) before any side effect (series storage, LLM client init) so
+#     an operator who typo'd 'shaddow' can never accidentally exercise
+#     the LLM path with mode silently forced to 'off'.
+#   * ``KRI_SERIES_R{5,6,7}_ENABLED`` are *boolean* toggles (per-rule).
+#     ``KRI_SERIES_REDUCER_MODE=on`` (enum) and
+#     ``KRI_SERIES_R6_ENABLED=on`` (boolean truthy alias) are unrelated
+#     axes despite sharing the literal 'on' — the mode axis governs the
+#     dispatcher state; the boolean axis governs per-rule enablement.
+# ---------------------------------------------------------------------------
+
+
+_VALID_REDUCER_MODES = frozenset({"off", "shadow", "on"})
+
+# Case-insensitive truthy strings for the per-rule env flags.  Anything
+# else (including the empty string and the literal '0'/'false'/'off') is
+# treated as False.  Matches the convention used by the ANTHROPIC SDK
+# and most kubernetes-style env plumbing.
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+class InvalidReducerModeError(ValueError):
+    """Raised when ``KRI_SERIES_REDUCER_MODE`` holds an unrecognised value.
+
+    A plain ``ValueError`` subclass — the HTTP-transport translation
+    (to 400) is the route's responsibility, not this helper's.  Keeps
+    the helper reusable from non-FastAPI callers (benchmarks, tests).
+    """
+
+
+def _env_reducer_mode() -> Literal["off", "shadow", "on"]:
+    """Return the requested reducer mode from ``KRI_SERIES_REDUCER_MODE``.
+
+    Defaults to ``"off"`` when unset or empty.  Raises
+    :class:`InvalidReducerModeError` on any invalid value — silent
+    fall-back would hide "I set shadow but the app is still in off"
+    surprises during rollout.
+
+    Case-insensitive: ``Shadow`` and ``SHADOW`` both map to ``shadow``.
+    """
+    raw = os.environ.get("KRI_SERIES_REDUCER_MODE", "").strip().lower()
+    if not raw:
+        return "off"
+    if raw not in _VALID_REDUCER_MODES:
+        raise InvalidReducerModeError(
+            f"invalid KRI_SERIES_REDUCER_MODE={raw!r}; "
+            f"must be one of {sorted(_VALID_REDUCER_MODES)}"
+        )
+    # ``raw`` is guaranteed to be one of _VALID_REDUCER_MODES here.
+    return raw  # type: ignore[return-value]
+
+
+def _env_flag(name: str) -> bool:
+    """Return ``True`` iff ``os.environ[name]`` is a case-insensitive
+    truthy value (see :data:`_TRUTHY_ENV`).  Missing/empty/unrecognised
+    values default to ``False`` — no silent True on a typo."""
+    return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV
 
 
 def create_app(
@@ -208,6 +278,18 @@ def create_app(
         from kri.llm.reviewer import IntelligentReviewEngine
         from kri.knowledge_manager.manager import KnowledgeManagerImpl
 
+        # WP-S1B / B3: validate env BEFORE any side effect (series storage,
+        # LLM client init, checkpatch spinup).  A misconfigured mode is a
+        # config bug the operator must see immediately — do not let it
+        # coast past the parse / _store_series step.
+        try:
+            reducer_mode = _env_reducer_mode()
+        except InvalidReducerModeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reducer_r5 = _env_flag("KRI_SERIES_R5_ENABLED")
+        reducer_r6 = _env_flag("KRI_SERIES_R6_ENABLED")
+        reducer_r7 = _env_flag("KRI_SERIES_R7_ENABLED")
+
         # Parse the series.
         if req.mbox:
             series = patches.parse(req.mbox)
@@ -245,7 +327,15 @@ def create_app(
                 static_analysis = StaticAnalysisManagerImpl(
                     StaticAnalysisConfig(repo_path=kernel_path)
                 )
-            engine = IntelligentReviewEngine(client=client, dkp=dkp, static_analysis=static_analysis)
+            engine = IntelligentReviewEngine(
+                client=client,
+                dkp=dkp,
+                static_analysis=static_analysis,
+                series_reducer_mode=reducer_mode,
+                series_r5_enabled=reducer_r5,
+                series_r6_enabled=reducer_r6,
+                series_r7_enabled=reducer_r7,
+            )
             report = engine.review(series)
             return report.model_dump()
         except LLMOfflineError as e:
