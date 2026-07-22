@@ -42,6 +42,20 @@ _WARNING_CONFIDENCE_FLOOR = 0.7
 # Categories that may be merged across mismatched labels (readiness §6.4).
 _SOFT_CATEGORIES = frozenset({"convention", "style", "nit"})
 
+# R1 trigger phrases (readiness spec §5.R1). Match is case-insensitive
+# and substring-based; anchoring to whole words / regex is intentionally
+# NOT done — real reviewer text is prose, not a fixed grammar. The
+# phrase list is kept narrow: every entry is binding-specific so a
+# generic "not documented" comment cannot fire the rule alone.
+_R1_TRIGGER_PHRASES: tuple[str, ...] = (
+    "no corresponding yaml binding",
+    "no binding document",
+    "missing binding",
+    "undocumented compatible",
+    "not documented in bindings",
+    "no dt binding",
+)
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -180,14 +194,92 @@ class SeriesReducer:
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
     ) -> list[ReducerAction]:
-        return []
+        """Trigger R1 for findings that complain about a missing binding
+        for a compatible / DT-property that a sibling patch in this
+        series actually declares.
+
+        Matching is intentionally narrow to keep false-positive rate
+        low: (1) the finding's text must contain a binding-specific
+        trigger phrase, AND (2) the finding must literally mention the
+        declared symbol as a substring. The symbol match is the real
+        disambiguator; the phrase list only weeds out unrelated
+        comments that happen to mention a symbol string.
+
+        Safety floor per readiness §6.4 is applied here (not in apply_R1)
+        so audit output under mode='shadow' already reflects what would
+        actually be suppressed — a floored finding NEVER generates an
+        action.
+        """
+        registry = series_ctx.declared_symbols
+        if not registry.compatibles and not registry.dt_properties:
+            return []
+
+        actions: list[ReducerAction] = []
+        for idx, comment in enumerate(comments):
+            if self._is_safety_floored(comment):
+                continue
+
+            haystack_parts = [comment.message or ""]
+            if comment.upstream_comment:
+                haystack_parts.append(comment.upstream_comment)
+            haystack = " ".join(haystack_parts).lower()
+
+            if not any(phrase in haystack for phrase in _R1_TRIGGER_PHRASES):
+                continue
+
+            matched_symbol: str | None = None
+            declaring_patch: str | None = None
+            # Longest declared symbol first — a specific compatible
+            # like "foo,bar-sndcard" wins over a prefix match on "foo,bar".
+            for sym in sorted(
+                list(registry.compatibles.keys()) + list(registry.dt_properties.keys()),
+                key=len,
+                reverse=True,
+            ):
+                if sym and sym.lower() in haystack:
+                    matched_symbol = sym
+                    declaring_patch = (
+                        registry.compatibles.get(sym)
+                        or registry.dt_properties.get(sym)
+                        or ""
+                    )
+                    break
+
+            if matched_symbol is None:
+                continue
+
+            actions.append(
+                ReducerAction(
+                    kind=ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS,
+                    patch_id=patch_id,
+                    finding_ref=f"{comment.file_path}:{comment.line_number}:{idx}",
+                    file=comment.file_path,
+                    line=comment.line_number,
+                    reason=f"declared_by_{declaring_patch}:{matched_symbol}",
+                    related_patch_id=declaring_patch or "",
+                )
+            )
+        return actions
 
     def _apply_R1(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        """Drop every comment whose ``file:line:index`` was flagged by
+        :meth:`_evaluate_R1`. Uses index (positional) rather than object
+        identity so a later rule that re-ordered the list would still
+        match — but in the current sequencing R1 runs first, so the
+        list is untouched at this point.
+        """
+        if not actions:
+            return comments
+        drop_refs = {a.finding_ref for a in actions}
+        return [
+            c
+            for idx, c in enumerate(comments)
+            if f"{c.file_path}:{c.line_number}:{idx}" not in drop_refs
+        ]
 
     def _evaluate_R3(
         self,
