@@ -20,6 +20,11 @@ from kri.llm.models import (
 )
 from kri.llm.prompts import AGGREGATE_REVIEW_PROMPT, SYSTEM_KERNEL_REVIEWER, build_domain_context
 from kri.llm.sanitize import strip_trailers
+from kri.series import (
+    SeriesReviewContext,
+    SeriesReviewContextBuilder,
+    format_series_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +38,16 @@ class IntelligentReviewEngine:
         config: LLMConfig | None = None,
         dkp: Any | None = None,
         static_analysis: Any | None = None,
+        series_awareness: bool = True,
+        series_context_builder: SeriesReviewContextBuilder | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
         self._static_analysis = static_analysis
+        self._series_awareness = series_awareness
+        self._series_context_builder = (
+            series_context_builder or SeriesReviewContextBuilder()
+        ) if series_awareness else None
         self._domain_context = ""
         if dkp:
             rules = dkp.rules() if hasattr(dkp, "rules") else None
@@ -47,9 +58,16 @@ class IntelligentReviewEngine:
         """Run all agents on every patch in the series."""
         start = time.monotonic()
 
+        series_ctx: SeriesReviewContext | None = None
+        if self._series_context_builder is not None:
+            series_ctx = self._series_context_builder.build(series)
+
         # Process patches concurrently (each patch spawns its own agent threads).
         with ThreadPoolExecutor(max_workers=min(len(series.patches), 4)) as pool:
-            futures = [pool.submit(self._review_patch, patch, series) for patch in series.patches]
+            futures = [
+                pool.submit(self._review_patch, patch, series, series_ctx)
+                for patch in series.patches
+            ]
             patch_reviews = [f.result() for f in futures]
 
         overall = self._generate_overall_assessment(patch_reviews)
@@ -62,21 +80,30 @@ class IntelligentReviewEngine:
             if pr.metadata
         )
 
+        metadata: dict[str, Any] = {
+            "llm_model": self._client._cfg.model,
+            "llm_stats": self._client.stats,
+            "processing_time_seconds": round(elapsed, 1),
+            "checkpatch_finding_count": total_checkpatch,
+        }
+        if series_ctx is not None and series_ctx.is_multi_patch():
+            metadata["series_context"] = series_ctx.to_metadata()
+
         return IntelligentReport(
             series_id=series.series_id,
             series_title=series.title,
             patches=patch_reviews,
             overall_assessment=overall,
             lore_reply=full_lore,
-            metadata={
-                "llm_model": self._client._cfg.model,
-                "llm_stats": self._client.stats,
-                "processing_time_seconds": round(elapsed, 1),
-                "checkpatch_finding_count": total_checkpatch,
-            },
+            metadata=metadata,
         )
 
-    def _review_patch(self, patch: Patch, series: PatchSeries) -> PatchReview:
+    def _review_patch(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        series_ctx: SeriesReviewContext | None = None,
+    ) -> PatchReview:
         """Run all agents on a single patch, aggregate results."""
         summarizer = PatchSummarizerAgent(self._client)
         code_quality = CodeQualityAgent(self._client, self._domain_context)
@@ -93,12 +120,22 @@ class IntelligentReviewEngine:
         summary: PatchSummary | None = None
         agent_outputs: list[AgentReviewOutput] = []
 
+        series_context_block = ""
+        if series_ctx is not None:
+            series_context_block = format_series_context(series_ctx, patch.patch_id)
+
         # Run agents in parallel using threads
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(summarizer.analyze, patch, series): "summarizer",
-                pool.submit(code_quality.review, patch, series, checkpatch_findings): "code_quality",
-                pool.submit(subsystem.review, patch, series, checkpatch_findings): "subsystem",
+                pool.submit(
+                    code_quality.review, patch, series, checkpatch_findings,
+                    series_context_block,
+                ): "code_quality",
+                pool.submit(
+                    subsystem.review, patch, series, checkpatch_findings,
+                    series_context_block,
+                ): "subsystem",
             }
             for future in as_completed(futures):
                 agent_name = futures[future]
@@ -127,6 +164,16 @@ class IntelligentReviewEngine:
         lore_reply = format_lore_reply(patch, summary, all_comments)
 
         real_findings = [f for f in checkpatch_findings if not f.get("degraded")]
+        pr_metadata: dict[str, Any] = {}
+        if real_findings:
+            pr_metadata["checkpatch_findings"] = real_findings
+        if series_ctx is not None and series_ctx.is_multi_patch():
+            entry = series_ctx.patch_index.get(patch.patch_id)
+            if entry is not None:
+                pr_metadata["series_index"] = {
+                    "index": entry.index,
+                    "total": entry.total,
+                }
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
@@ -134,7 +181,7 @@ class IntelligentReviewEngine:
             inline_comments=all_comments,
             general_comments=self._collect_general(agent_outputs),
             lore_reply=lore_reply,
-            metadata={"checkpatch_findings": real_findings} if real_findings else {},
+            metadata=pr_metadata,
         )
 
     def _merge_comments(self, outputs: list[AgentReviewOutput]) -> list[InlineComment]:

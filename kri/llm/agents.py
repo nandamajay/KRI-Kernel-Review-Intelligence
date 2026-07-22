@@ -75,11 +75,18 @@ class CodeQualityAgent:
         self._client = client
         self._domain_context = domain_context
 
-    def review(self, patch: Patch, series: PatchSeries, static_findings: list[dict] | None = None) -> AgentReviewOutput:
+    def review(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        static_findings: list[dict] | None = None,
+        series_context: str = "",
+    ) -> AgentReviewOutput:
         annotated = annotate_diff_with_line_numbers(patch.diff)
         prompt = REVIEW_CODE_QUALITY_PROMPT.format(
             domain_context=self._domain_context,
             static_findings=format_static_findings(static_findings or []),
+            series_context=series_context,
             commit_message=patch.commit_message[:2000],
             annotated_diff=_truncate_at_line_boundary(annotated, 12000),
             upstream_comment_instruction=_upstream_comment_instruction(),
@@ -128,11 +135,18 @@ class SubsystemExpertAgent:
         self._client = client
         self._domain_context = domain_context
 
-    def review(self, patch: Patch, series: PatchSeries, static_findings: list[dict] | None = None) -> AgentReviewOutput:
+    def review(
+        self,
+        patch: Patch,
+        series: PatchSeries,
+        static_findings: list[dict] | None = None,
+        series_context: str = "",
+    ) -> AgentReviewOutput:
         annotated = annotate_diff_with_line_numbers(patch.diff)
         prompt = REVIEW_SUBSYSTEM_PROMPT.format(
             domain_context=self._domain_context,
             static_findings=format_static_findings(static_findings or []),
+            series_context=series_context,
             commit_message=patch.commit_message[:2000],
             files_changed="\n".join(patch.files_changed),
             annotated_diff=_truncate_at_line_boundary(annotated, 12000),
