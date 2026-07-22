@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Literal
 
 from kri.common.models import Patch, PatchSeries, Severity
 from kri.llm.agents import CodeQualityAgent, PatchSummarizerAgent, SubsystemExpertAgent
@@ -21,6 +21,7 @@ from kri.llm.models import (
 from kri.llm.prompts import AGGREGATE_REVIEW_PROMPT, SYSTEM_KERNEL_REVIEWER, build_domain_context
 from kri.llm.sanitize import strip_trailers
 from kri.series import (
+    SeriesReducer,
     SeriesReviewContext,
     SeriesReviewContextBuilder,
     format_series_context,
@@ -40,6 +41,11 @@ class IntelligentReviewEngine:
         static_analysis: Any | None = None,
         series_awareness: bool = True,
         series_context_builder: SeriesReviewContextBuilder | None = None,
+        series_reducer_mode: Literal["off", "shadow", "on"] = "off",
+        series_reducer: SeriesReducer | None = None,
+        series_r5_enabled: bool = False,
+        series_r6_enabled: bool = False,
+        series_r7_enabled: bool = False,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
@@ -48,6 +54,15 @@ class IntelligentReviewEngine:
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
         ) if series_awareness else None
+        # WP-S1B: series reducer is *always* instantiated but is a no-op
+        # in mode="off" (the default). Feature-flag geometry per readiness §6.1.
+        self._series_reducer = series_reducer or SeriesReducer()
+        self._series_reducer_mode: Literal["off", "shadow", "on"] = series_reducer_mode
+        self._series_reducer_flags: dict[str, bool] = {
+            "series_r5_enabled": series_r5_enabled,
+            "series_r6_enabled": series_r6_enabled,
+            "series_r7_enabled": series_r7_enabled,
+        }
         self._domain_context = ""
         if dkp:
             rules = dkp.rules() if hasattr(dkp, "rules") else None
@@ -159,6 +174,20 @@ class IntelligentReviewEngine:
             if not comment.hunk_context:
                 lines = extract_hunk_context(diff_lines, comment.file_path, comment.line_number)
                 comment.hunk_context = "\n".join(lines)
+
+        # WP-S1B Step B1: series reducer runs AFTER _merge_comments + hunk_context
+        # back-fill, BEFORE PatchReview assembly (authoritative ordering per
+        # readiness review §7.B1). mode="off" is a pure no-op — the reducer
+        # returns its input unchanged and no evaluator runs, guaranteeing
+        # byte-identity with the pre-B1 path.
+        reducer_result = self._series_reducer.reduce(
+            patch_id=patch.patch_id,
+            comments=all_comments,
+            series_ctx=series_ctx,
+            mode=self._series_reducer_mode,
+            flags=self._series_reducer_flags,
+        )
+        all_comments = reducer_result.comments
 
         # Generate lore-style reply
         lore_reply = format_lore_reply(patch, summary, all_comments)

@@ -1,10 +1,10 @@
 """WP-S1 Series-Aware Reasoning package.
 
-Public surface: builder + prompt renderer + frozen dataclasses.
+Public surface: builder + prompt renderer + reducer + frozen dataclasses.
 
-The reducer (WP-S1B) is not shipped in this package yet; it will be added in
-a follow-up commit boundary. Consumers that only need the builder can import
-from here directly.
+Step B1 lands the reducer *skeleton*: dispatcher, per-rule
+``evaluate_R_k`` / ``apply_R_k`` split, mode/flag plumbing. No rule
+bodies yet — those follow in B4+.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from kri.series.models import (
     SymbolRegistry,
 )
 from kri.series.prompt import format_series_context
+from kri.series.reducer import ReducerResult, SeriesReducer
 
 __all__ = [
     "SeriesReviewContextBuilder",
@@ -28,5 +29,7 @@ __all__ = [
     "SeriesProvenance",
     "ReducerAction",
     "ReducerActionKind",
+    "ReducerResult",
+    "SeriesReducer",
     "format_series_context",
 ]
