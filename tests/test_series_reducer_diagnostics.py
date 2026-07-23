@@ -105,7 +105,6 @@ def test_diagnostics_default_in_off_mode():
     result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="off")
 
     assert result.diagnostics == ReducerDiagnostics()
-    assert result.diagnostics.r1_precondition_hits == 0
     assert result.diagnostics.r3_precondition_hits == 0
     assert result.diagnostics.r4_bucket_candidates_pre_floor == 0
     assert result.diagnostics.r4_bucket_candidates_post_floor == 0
@@ -121,73 +120,6 @@ def test_diagnostics_default_in_single_patch_series():
     result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow")
 
     assert result.diagnostics == ReducerDiagnostics()
-
-
-# ---------------------------------------------------------------------------
-# R1 precondition counter — broader than the current R1 phrase gate.
-# ---------------------------------------------------------------------------
-
-
-def test_diagnostics_r1_hits_when_symbol_and_binding_word_present():
-    """A finding that cites a declared symbol AND mentions binding/yaml/
-    documentation counts as an R1 precondition hit — regardless of
-    whether R1's narrow phrase list matches. This is the counter the
-    "should R1 relax its phrase gate?" question hinges on."""
-    reducer = SeriesReducer()
-    ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
-    # No R1 trigger phrase, but does cite the symbol AND has "binding"
-    # in the text — exactly the kind of prose the real LLM emits.
-    cmt = _cmt(
-        message="foo,bar-sndcard binding schema lacks a maxItems constraint on reg",
-        category="dt_binding",
-    )
-
-    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow")
-
-    assert result.diagnostics.r1_precondition_hits == 1
-    # No R1 action — the phrase gate did NOT fire. This is exactly the
-    # gap-signal we want: precondition-hit > 0 while actions == 0.
-    from kri.series import ReducerActionKind
-    r1_actions = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
-    assert r1_actions == []
-
-
-def test_diagnostics_r1_no_hit_when_symbol_absent():
-    """Symbol not cited → not an R1 precondition, even if 'binding' appears."""
-    reducer = SeriesReducer()
-    ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
-    cmt = _cmt(message="binding style could be cleaner", category="convention")
-
-    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow")
-
-    assert result.diagnostics.r1_precondition_hits == 0
-
-
-def test_diagnostics_r1_no_hit_when_binding_word_absent():
-    """Symbol cited but no binding/documentation word → not R1 precondition."""
-    reducer = SeriesReducer()
-    ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
-    cmt = _cmt(message="foo,bar-sndcard uses an odd naming convention",
-               category="convention")
-
-    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow")
-
-    assert result.diagnostics.r1_precondition_hits == 0
-
-
-def test_diagnostics_r1_scans_upstream_comment_field():
-    """The hint word can live in upstream_comment as well as message.
-    Matches _evaluate_R1's own behaviour — diagnostics must not disagree."""
-    reducer = SeriesReducer()
-    ctx = _ctx(dt_properties={"qcom,foo-clk": "p2"})
-    cmt = _cmt(
-        message="See below",
-        upstream_comment="qcom,foo-clk documentation is missing schema constraint",
-    )
-
-    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="shadow")
-
-    assert result.diagnostics.r1_precondition_hits == 1
 
 
 # ---------------------------------------------------------------------------
@@ -350,51 +282,43 @@ def test_diagnostics_shadow_and_on_produce_identical_counters():
     # Sanity: at least one of the counters should be non-zero on this
     # fixture — otherwise the test isn't actually exercising the code.
     assert (
-        shadow.diagnostics.r1_precondition_hits
-        + shadow.diagnostics.r3_precondition_hits
+        shadow.diagnostics.r3_precondition_hits
         + shadow.diagnostics.r4_bucket_candidates_pre_floor
     ) >= 1
 
 
 def test_diagnostics_reflect_pre_mutation_input_under_mode_on():
-    """Under mode='on', _apply_R1 removes matched comments from the
-    working list. Diagnostics MUST count the pre-mutation input — if a
-    future refactor accidentally reads the post-mutation list, this
-    test catches it because the R1 precondition hit vanishes from the
-    counter.
+    """Under mode='on', _apply_R3 sets series_prefix on matched comments.
+    Diagnostics MUST count the pre-mutation input — if a future refactor
+    accidentally reads the post-mutation list, this test catches it because
+    the r3_precondition_hits counter uses the original message content
+    (before series_prefix is set).
 
-    Fixture: one R1-triggering finding that will BE SUPPRESSED under
-    mode='on'. Pre-mutation r1_precondition_hits == 1. If the counter
-    were computed post-mutation it would be 0."""
+    Fixture: one R3-triggering finding that will be TAGGED under mode='on'.
+    r3_precondition_hits must be 1 regardless of mode, since diagnostics
+    run against the original input list."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
-    # "missing binding" is in the current _R1_TRIGGER_PHRASES list, so
-    # R1 WILL fire under mode='on'. "binding" is in the diagnostic
-    # hint list. Symbol matches.
-    r1_target = _cmt(
-        message="missing binding for foo,bar-sndcard",
-        category="documentation",
+    r3_target = _cmt(
+        message="waiting on another patch to add foo,bar-sndcard — it is not defined yet",
+        category="design",
         line_number=10,
         confidence=0.5,
     )
 
     on = reducer.reduce(
-        patch_id="p1", comments=[r1_target], series_ctx=ctx, mode="on"
+        patch_id="p1", comments=[r3_target], series_ctx=ctx, mode="on"
     )
 
-    # Confirm R1 actually fired (otherwise the test doesn't distinguish
-    # pre- from post-mutation).
     from kri.series import ReducerActionKind
-    r1_actions = [
+    r3_actions = [
         a for a in on.actions
-        if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS
+        if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE
     ]
-    assert len(r1_actions) == 1, "fixture must trigger R1 for this test to be meaningful"
-    assert on.comments == [], "R1 mode='on' must suppress the matched comment"
+    assert len(r3_actions) == 1, "fixture must trigger R3 for this test to be meaningful"
 
-    # The pre-mutation input had one R1-precondition hit → counter is 1.
-    # If diagnostics ran POST-mutation (empty list), it would be 0.
-    assert on.diagnostics.r1_precondition_hits == 1
+    # Diagnostics count the pre-mutation input → r3_precondition_hits == 1.
+    assert on.diagnostics.r3_precondition_hits == 1
 
 
 # ---------------------------------------------------------------------------
@@ -408,19 +332,16 @@ def test_diagnostics_to_metadata_field_names_are_stable():
     aggregation tooling will read these keys. Locking them in prevents
     silent rename breakage."""
     diag = ReducerDiagnostics(
-        r1_precondition_hits=1,
         r3_precondition_hits=2,
         r4_bucket_candidates_pre_floor=3,
         r4_bucket_candidates_post_floor=4,
     )
     payload = diag.to_metadata()
     assert set(payload.keys()) == {
-        "r1_precondition_hits",
         "r3_precondition_hits",
         "r4_bucket_candidates_pre_floor",
         "r4_bucket_candidates_post_floor",
     }
-    assert payload["r1_precondition_hits"] == 1
     assert payload["r3_precondition_hits"] == 2
     assert payload["r4_bucket_candidates_pre_floor"] == 3
     assert payload["r4_bucket_candidates_post_floor"] == 4
@@ -517,37 +438,4 @@ def test_diagnostics_r3_absence_prose_increments_hit_but_does_not_fire_action():
     assert result.diagnostics.r3_precondition_hits == 1, (
         f"r3_precondition_hits must be 1 for absence-shaped prose. "
         f"Got {result.diagnostics.r3_precondition_hits}."
-    )
-
-
-def test_diagnostics_r1_precondition_fires_on_rubikpi3_binding_prose():
-    """r1_precondition_hits must fire when 'binding' hint word appears alongside
-    a declared symbol — even if R1's narrow phrase list doesn't produce an action.
-
-    The RubikPi3 corpus finding 5.2 contains 'binding' (an r1_precondition_hint)
-    and mentions 'thundercomm,qcs6490-rubikpi3-sndcard' (a declared compatible).
-    R1 action depends on whether a trigger phrase is present; the precondition
-    counter fires regardless.
-    """
-    reducer = SeriesReducer()
-    ctx = _ctx(compatibles={"thundercomm,qcs6490-rubikpi3-sndcard": "p1"}, total_patches=6)
-
-    # This prose has the hint word 'binding' + declared symbol → precondition hit.
-    # It also has R1 trigger phrase "missing" + "binding" + symbol → R1 fires.
-    # We test: precondition hit is recorded.
-    cmt = _cmt(
-        message=(
-            "missing binding for thundercomm,qcs6490-rubikpi3-sndcard — the "
-            "compatible is used here but no binding YAML entry was found."
-        ),
-        category="documentation",
-        confidence=0.65,
-        severity=Severity.INFO,
-    )
-
-    result = reducer.reduce(patch_id="p5", comments=[cmt], series_ctx=ctx, mode="shadow")
-
-    assert result.diagnostics.r1_precondition_hits == 1, (
-        f"r1_precondition_hits must be 1 for 'binding' + declared symbol prose. "
-        f"Got {result.diagnostics.r1_precondition_hits}."
     )

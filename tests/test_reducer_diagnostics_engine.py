@@ -8,7 +8,7 @@ before the reducer sees anything. These tests lock down:
    run against a multi-patch series (and absent for mode='off').
 2. Cross-agent overlap counters reflect the RAW 3-agent output, not the
    post-merge collapsed list.
-3. Reducer's own diagnostic counters (r1_precondition_hits, etc.) are
+3. Reducer's own diagnostic counters (r3_precondition_hits, etc.) are
    merged into the same metadata dict — one place to look, one shadow
    log to scrape.
 
@@ -167,7 +167,6 @@ def test_diagnostics_dict_contains_all_expected_keys():
     the engine's cross-agent overlap counters. This is the contract
     downstream shadow-log tooling will rely on."""
     spy = _SpyReducer(diagnostics=ReducerDiagnostics(
-        r1_precondition_hits=1,
         r3_precondition_hits=2,
         r4_bucket_candidates_pre_floor=3,
         r4_bucket_candidates_post_floor=0,
@@ -176,7 +175,6 @@ def test_diagnostics_dict_contains_all_expected_keys():
     for pr in report.patches:
         diag = pr.metadata["reducer_diagnostics"]
         # Reducer-derived
-        assert "r1_precondition_hits" in diag
         assert "r3_precondition_hits" in diag
         assert "r4_bucket_candidates_pre_floor" in diag
         assert "r4_bucket_candidates_post_floor" in diag
@@ -209,7 +207,6 @@ def test_diagnostics_reducer_counters_surface_verbatim():
     them into pr_metadata unchanged. No arithmetic, no rounding, no
     filtering."""
     diag = ReducerDiagnostics(
-        r1_precondition_hits=7,
         r3_precondition_hits=11,
         r4_bucket_candidates_pre_floor=13,
         r4_bucket_candidates_post_floor=2,
@@ -218,7 +215,6 @@ def test_diagnostics_reducer_counters_surface_verbatim():
     report = _run(mode="shadow", spy=spy)
     for pr in report.patches:
         d = pr.metadata["reducer_diagnostics"]
-        assert d["r1_precondition_hits"] == 7
         assert d["r3_precondition_hits"] == 11
         assert d["r4_bucket_candidates_pre_floor"] == 13
         assert d["r4_bucket_candidates_post_floor"] == 2
@@ -306,5 +302,4 @@ def test_diagnostics_emitted_even_when_series_ctx_absent():
         "diagnostics dict (see reducer.py F2 fix)."
     )
     # All the reducer-derived counters are default zeros.
-    assert diag["r1_precondition_hits"] == 0
     assert diag["r4_bucket_candidates_pre_floor"] == 0

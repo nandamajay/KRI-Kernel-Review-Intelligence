@@ -99,24 +99,6 @@ _R3_TRIGGER_PHRASES: tuple[str, ...] = (
     "not yet applied series",
 )
 
-# Diagnostic-only vocabularies (do NOT gate any rule body). See
-# :class:`ReducerDiagnostics` for the questions these counters answer.
-# _R1_PRECONDITION_HINTS is intentionally BROADER than
-# _R1_TRIGGER_PHRASES — it approximates the wide-symbol relaxation
-# proposed by the WP-S1B adversarial report's Counter-finding A and
-# lets shadow runs measure how much recall the current gate is
-# leaving on the table.
-_R1_PRECONDITION_HINTS: tuple[str, ...] = (
-    "binding",
-    "compatible",
-    "yaml",
-    "dt-binding",
-    "dt_binding",
-    "documented",
-    "documentation",
-    "schema",
-)
-
 # R3 precondition matches the "absence" shape a series-aware LLM
 # would emit when it thinks a symbol is undeclared. The prose the
 # 6-batch scan surfaced ("... but the symbol X does not appear to be
@@ -161,11 +143,6 @@ class ReducerDiagnostics:
 
     The counters answer the questions the 6-batch shadow run could not:
 
-    - ``r1_precondition_hits``: findings citing a declared symbol AND a
-      binding/documentation word — the wide-symbol relaxation R1
-      *would* trigger on if its narrow phrase list were replaced by
-      symbol-only matching. Non-zero here + zero R1 actions == phrase
-      list is the bottleneck.
     - ``r3_precondition_hits``: findings citing a declared symbol AND an
       absence-shaped word (not defined / referenced but / undefined /
       missing definition). Non-zero here + zero R3 actions == R3's
@@ -183,14 +160,12 @@ class ReducerDiagnostics:
     only, no time/rng/address involvement.
     """
 
-    r1_precondition_hits: int = 0
     r3_precondition_hits: int = 0
     r4_bucket_candidates_pre_floor: int = 0
     r4_bucket_candidates_post_floor: int = 0
 
     def to_metadata(self) -> dict[str, int]:
         return {
-            "r1_precondition_hits": self.r1_precondition_hits,
             "r3_precondition_hits": self.r3_precondition_hits,
             "r4_bucket_candidates_pre_floor": self.r4_bucket_candidates_pre_floor,
             "r4_bucket_candidates_post_floor": self.r4_bucket_candidates_post_floor,
@@ -336,7 +311,6 @@ class SeriesReducer:
         declared = list(registry.compatibles.keys()) + list(registry.dt_properties.keys())
         declared_lower = [s.lower() for s in declared if s]
 
-        r1_hits = 0
         r3_hits = 0
         for comment in comments:
             haystack_parts = [comment.message or ""]
@@ -347,8 +321,6 @@ class SeriesReducer:
             cites_symbol = any(sym in haystack for sym in declared_lower)
             if not cites_symbol:
                 continue
-            if any(hint in haystack for hint in _R1_PRECONDITION_HINTS):
-                r1_hits += 1
             if any(hint in haystack for hint in _R3_PRECONDITION_HINTS):
                 r3_hits += 1
 
@@ -370,7 +342,6 @@ class SeriesReducer:
         post_ge2 = sum(1 for count in post_buckets.values() if count >= 2)
 
         return ReducerDiagnostics(
-            r1_precondition_hits=r1_hits,
             r3_precondition_hits=r3_hits,
             r4_bucket_candidates_pre_floor=pre_ge2,
             r4_bucket_candidates_post_floor=post_ge2,
