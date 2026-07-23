@@ -427,3 +427,181 @@ def test_R1_positive_binding_comment_not_suppressed():
         "sufficient trigger."
     )
     assert result.comments == [praise_a, praise_b]
+
+
+# ---------------------------------------------------------------------------
+# R1 scope boundary: only compatibles + dt_properties are checked
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with_files_added(symbol: str, declaring_patch: str) -> SeriesReviewContext:
+    """Builds a context where symbol is ONLY in files_added, not in
+    compatibles or dt_properties.  R1 must NOT fire on such a symbol."""
+    entries = {
+        f"p{i}": PatchIndexEntry(
+            patch_id=f"p{i}",
+            index=i,
+            total=2,
+            subject=f"[PATCH {i}/2] p{i}",
+            files_changed=("drivers/x/foo.c",),
+        )
+        for i in range(1, 3)
+    }
+    registry = SymbolRegistry(
+        compatibles={},
+        dt_properties={},
+        c_symbols={},
+        files_added={symbol: declaring_patch},
+    )
+    return SeriesReviewContext(
+        series_id="s1",
+        title="R1 scope boundary test",
+        cover_letter="cl",
+        total_patches=2,
+        patch_index=entries,
+        declared_symbols=registry,
+        file_touch_map={},
+    )
+
+
+def _ctx_with_c_symbols(symbol: str, declaring_patch: str) -> SeriesReviewContext:
+    """Builds a context where symbol is ONLY in c_symbols."""
+    entries = {
+        f"p{i}": PatchIndexEntry(
+            patch_id=f"p{i}",
+            index=i,
+            total=2,
+            subject=f"[PATCH {i}/2] p{i}",
+            files_changed=("drivers/x/foo.c",),
+        )
+        for i in range(1, 3)
+    }
+    registry = SymbolRegistry(
+        compatibles={},
+        dt_properties={},
+        c_symbols={symbol: declaring_patch},
+        files_added={},
+    )
+    return SeriesReviewContext(
+        series_id="s1",
+        title="R1 scope boundary test",
+        cover_letter="cl",
+        total_patches=2,
+        patch_index=entries,
+        declared_symbols=registry,
+        file_touch_map={},
+    )
+
+
+def test_R1_does_not_fire_on_files_added_only_symbol():
+    """R1 only consults registry.compatibles and registry.dt_properties.
+    A symbol that is only in registry.files_added must NOT trigger R1
+    suppression.
+
+    This is a scope boundary test — it documents the current implementation
+    boundary.  If R1 is ever expanded to cover files_added, this test must
+    be updated explicitly rather than silently breaking.
+
+    Rationale for the boundary: 'files_added' tracks which source files a
+    patch introduces, not DT binding declarations.  Suppressing a 'missing
+    binding' finding because a *file* was added by a sibling patch would be
+    a semantic overreach — the binding might still be absent even if the file
+    exists.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx_with_files_added("sound/soc/qcom/sc8280xp.c", "p2")
+
+    cmt = _cmt(
+        message="missing binding for sound/soc/qcom/sc8280xp.c — no YAML schema found",
+        category="documentation",
+        confidence=0.60,
+    )
+
+    result = reducer.reduce(
+        patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
+    )
+
+    r1_actions = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
+    assert len(r1_actions) == 0, (
+        f"R1 must NOT fire when the symbol is only in files_added (not compatibles/dt_properties). "
+        f"Got {len(r1_actions)} R1 actions.  If this assertion fails after an R1 expansion, "
+        f"update this test with explicit coverage for the new behavior."
+    )
+    assert len(result.comments) == 1, "Comment must survive when R1 does not fire"
+
+
+def test_R1_does_not_fire_on_c_symbols_only_symbol():
+    """R1 only consults registry.compatibles and registry.dt_properties.
+    A symbol that is only in registry.c_symbols must NOT trigger R1.
+
+    Rationale: c_symbols are C-language symbols (function names, struct names,
+    #define identifiers).  R1 is designed for DT binding declarations.
+    Expanding R1 to cover c_symbols would conflate DT-binding suppression
+    with C API availability — a different semantic question that would need
+    its own rule.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx_with_c_symbols("snd_soc_register_card", "p2")
+
+    cmt = _cmt(
+        message="missing binding for snd_soc_register_card — no YAML schema found",
+        category="documentation",
+        confidence=0.60,
+    )
+
+    result = reducer.reduce(
+        patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
+    )
+
+    r1_actions = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
+    assert len(r1_actions) == 0, (
+        f"R1 must NOT fire when the symbol is only in c_symbols. "
+        f"Got {len(r1_actions)} R1 actions."
+    )
+    assert len(result.comments) == 1
+
+
+def test_R1_fires_when_same_symbol_in_both_compatibles_and_files_added():
+    """If a symbol appears in BOTH compatibles AND files_added, R1 fires
+    because compatibles is checked.  This confirms the rule fires correctly
+    even when the symbol is duplicated across registry fields.
+    """
+    reducer = SeriesReducer()
+    entries = {
+        f"p{i}": PatchIndexEntry(
+            patch_id=f"p{i}",
+            index=i,
+            total=2,
+            subject=f"[PATCH {i}/2] p{i}",
+            files_changed=("drivers/x/foo.c",),
+        )
+        for i in range(1, 3)
+    }
+    registry = SymbolRegistry(
+        compatibles={"foo,bar-sndcard": "p2"},
+        dt_properties={},
+        c_symbols={},
+        files_added={"foo,bar-sndcard": "p2"},
+    )
+    ctx = SeriesReviewContext(
+        series_id="s1", title="R1 scope boundary", cover_letter="cl",
+        total_patches=2, patch_index=entries, declared_symbols=registry,
+        file_touch_map={},
+    )
+
+    cmt = _cmt(
+        message="missing binding for foo,bar-sndcard",
+        category="documentation",
+        confidence=0.60,
+    )
+
+    result = reducer.reduce(
+        patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
+    )
+
+    r1_actions = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
+    assert len(r1_actions) == 1, (
+        f"R1 must fire when the symbol is in compatibles (even if also in files_added). "
+        f"Got {len(r1_actions)} R1 actions."
+    )
+    assert len(result.comments) == 0
