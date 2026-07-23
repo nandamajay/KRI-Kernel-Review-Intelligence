@@ -424,3 +424,130 @@ def test_diagnostics_to_metadata_field_names_are_stable():
     assert payload["r3_precondition_hits"] == 2
     assert payload["r4_bucket_candidates_pre_floor"] == 3
     assert payload["r4_bucket_candidates_post_floor"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics corpus tests — real RubikPi3 v2 prose shapes
+#
+# These tests use the same prose from test_series_reducer_corpus.py but
+# target the diagnostic counters specifically.  The key question answered:
+# does the trigger-phrase prose (R3 action) vs absence-shaped prose
+# (r3_precondition_hits) count differently in diagnostics?
+# ---------------------------------------------------------------------------
+
+
+def test_diagnostics_r3_trigger_phrase_fires_action_but_not_precondition_hit():
+    """R3's trigger-phrase vocabulary (for detecting maintainer-reply style
+    prose) is SEPARATE from the r3_precondition_hints vocabulary (for
+    detecting LLM absence-shaped prose).
+
+    The RubikPi3 corpus prose "depends on the not-yet-merged binding update
+    for thundercomm,qcs6490-rubikpi3-sndcard" contains an R3 trigger phrase
+    ("depends on the not-yet-merged") that fires an R3 action.  It does NOT
+    contain an r3_precondition_hint word ("not defined", "not declared", etc.)
+    so r3_precondition_hits must remain 0.
+
+    This documents that the precondition counter is aimed at LLM prose shapes
+    the trigger vocabulary misses — the two detection vocabularies are
+    complementary, not redundant.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"thundercomm,qcs6490-rubikpi3-sndcard": "p1"}, total_patches=6)
+
+    cmt = _cmt(
+        message=(
+            "This patch depends on the not-yet-merged binding update for "
+            "thundercomm,qcs6490-rubikpi3-sndcard — the compatible must be "
+            "documented in the bindings before this driver change can be merged."
+        ),
+        category="documentation",
+        confidence=0.60,
+    )
+
+    result = reducer.reduce(patch_id="p5", comments=[cmt], series_ctx=ctx, mode="shadow")
+
+    from kri.series import ReducerActionKind
+    r3_actions = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
+
+    # R3 trigger phrase fires — action is recorded.
+    assert len(r3_actions) == 1, (
+        f"R3 trigger phrase ('depends on the not-yet-merged') must fire an action. "
+        f"Got {len(r3_actions)} R3 actions."
+    )
+    # r3_precondition_hits is 0 — this prose has no absence-shape hint words.
+    assert result.diagnostics.r3_precondition_hits == 0, (
+        f"r3_precondition_hits must be 0 for trigger-phrase prose (no absence hint words). "
+        f"Got {result.diagnostics.r3_precondition_hits}."
+    )
+
+
+def test_diagnostics_r3_absence_prose_increments_hit_but_does_not_fire_action():
+    """LLM absence-shaped prose ("does not appear to be defined") increments
+    r3_precondition_hits but does NOT fire R3 action because it has no R3
+    trigger phrase.
+
+    This is the case the diagnostic counter was designed to measure: the LLM
+    produces prose the trigger vocabulary misses, so R3 evaluates (and finds
+    no trigger phrase → no action) while the precondition counter records
+    that the input had the structural shape R3 was designed for.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"thundercomm,qcs6490-rubikpi3-sndcard": "p1"}, total_patches=6)
+
+    cmt = _cmt(
+        message=(
+            "thundercomm,qcs6490-rubikpi3-sndcard does not appear to be defined "
+            "in this patch or any other patch in the series"
+        ),
+        category="documentation",
+        confidence=0.60,
+    )
+
+    result = reducer.reduce(patch_id="p5", comments=[cmt], series_ctx=ctx, mode="shadow")
+
+    from kri.series import ReducerActionKind
+    r3_actions = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
+
+    # No trigger phrase → no R3 action.
+    assert len(r3_actions) == 0, (
+        f"Absence-shaped prose without a trigger phrase must not fire R3. "
+        f"Got {len(r3_actions)} R3 actions."
+    )
+    # But precondition counter must record the hit.
+    assert result.diagnostics.r3_precondition_hits == 1, (
+        f"r3_precondition_hits must be 1 for absence-shaped prose. "
+        f"Got {result.diagnostics.r3_precondition_hits}."
+    )
+
+
+def test_diagnostics_r1_precondition_fires_on_rubikpi3_binding_prose():
+    """r1_precondition_hits must fire when 'binding' hint word appears alongside
+    a declared symbol — even if R1's narrow phrase list doesn't produce an action.
+
+    The RubikPi3 corpus finding 5.2 contains 'binding' (an r1_precondition_hint)
+    and mentions 'thundercomm,qcs6490-rubikpi3-sndcard' (a declared compatible).
+    R1 action depends on whether a trigger phrase is present; the precondition
+    counter fires regardless.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"thundercomm,qcs6490-rubikpi3-sndcard": "p1"}, total_patches=6)
+
+    # This prose has the hint word 'binding' + declared symbol → precondition hit.
+    # It also has R1 trigger phrase "missing" + "binding" + symbol → R1 fires.
+    # We test: precondition hit is recorded.
+    cmt = _cmt(
+        message=(
+            "missing binding for thundercomm,qcs6490-rubikpi3-sndcard — the "
+            "compatible is used here but no binding YAML entry was found."
+        ),
+        category="documentation",
+        confidence=0.65,
+        severity=Severity.INFO,
+    )
+
+    result = reducer.reduce(patch_id="p5", comments=[cmt], series_ctx=ctx, mode="shadow")
+
+    assert result.diagnostics.r1_precondition_hits == 1, (
+        f"r1_precondition_hits must be 1 for 'binding' + declared symbol prose. "
+        f"Got {result.diagnostics.r1_precondition_hits}."
+    )
