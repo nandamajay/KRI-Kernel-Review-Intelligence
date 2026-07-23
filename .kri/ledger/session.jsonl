@@ -1,0 +1,13 @@
+{
+  "session_start": "2026-07-24T00:00:00Z",
+  "base_commit": "a5e0c00",
+  "current_tier": "T3",
+  "tier_t1_cycle_count": 0,
+  "tier_t2_cycle_count": 10,
+  "tier_t3_cycle_count": 0,
+  "escalation_count": 0,
+  "consecutive_escalations": 0,
+  "certain_claims": [],
+  "stop_reason": null,
+  "status": "ACTIVE"
+}

@@ -1,0 +1,1 @@
+{"task_id": 81, "tier": "T2", "status": "completed", "commit": "8206b6a", "files": ["tests/test_knowledge_graph.py"], "production_loc_delta": 0, "tests_before": 429, "tests_after": 439, "description": "Add KnowledgeGraph unit tests — zero coverage module", "validation": {"A": "pass", "B": "pass", "D": "clean", "E": "1 file 97 insertions"}}
