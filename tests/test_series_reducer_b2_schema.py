@@ -312,3 +312,47 @@ def test_SM13_D_non_default_series_provenance_serialises_via_to_metadata():
     # Round-trip: dict form re-validates to an equal SeriesProvenance.
     reloaded = InlineComment.model_validate(dumped)
     assert reloaded.series_provenance == prov
+
+
+def test_reducer_action_to_metadata_round_trip() -> None:
+    """ReducerAction.to_metadata() must be deterministic and cover all fields."""
+    from kri.series.models import ReducerAction, ReducerActionKind
+
+    action = ReducerAction(
+        kind=ReducerActionKind.R4_LINE_BUCKET_MERGE,
+        patch_id="p3",
+        finding_ref="drivers/x/a.c:42:deadbeef01234567",
+        file="drivers/x/a.c",
+        line=42,
+        reason="bucketed with sibling at line 45",
+        absorbed_refs=("drivers/x/a.c:45:abcdef0123456789",),
+        related_patch_id="p2",
+    )
+    md = action.to_metadata()
+
+    assert md["kind"] == "line_bucket_merge"
+    assert md["patch_id"] == "p3"
+    assert md["finding_ref"] == "drivers/x/a.c:42:deadbeef01234567"
+    assert md["file"] == "drivers/x/a.c"
+    assert md["line"] == 42
+    assert md["absorbed_refs"] == ["drivers/x/a.c:45:abcdef0123456789"]
+    assert md["related_patch_id"] == "p2"
+    # absorbed_refs in metadata must be a list, not a tuple (JSON-serialisable)
+    assert isinstance(md["absorbed_refs"], list)
+
+
+def test_reducer_action_to_metadata_defaults() -> None:
+    """ReducerAction with only required fields must serialise optional fields as defaults."""
+    from kri.series.models import ReducerAction, ReducerActionKind
+
+    action = ReducerAction(
+        kind=ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS,
+        patch_id="p1",
+        finding_ref="f/a.c:10:abc",
+    )
+    md = action.to_metadata()
+    assert md["file"] == ""
+    assert md["line"] == 0
+    assert md["reason"] == ""
+    assert md["absorbed_refs"] == []
+    assert md["related_patch_id"] == ""
