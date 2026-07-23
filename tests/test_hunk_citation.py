@@ -103,3 +103,58 @@ def test_extract_hunk_citation_multi_file_correct_attribution() -> None:
     assert result2 is not None
     assert result2.file == "sound/soc/codecs/Kconfig"
     assert any("SND_SOC_TEST" in ln for ln in result2.verbatim_lines)
+
+
+# ---------------------------------------------------------------------------
+# extract_hunk_context (formatter.py) — reviewer backfill
+# ---------------------------------------------------------------------------
+
+
+def test_extract_hunk_context_returns_windowed_lines() -> None:
+    """extract_hunk_context returns ≤2*window+1 lines centred on target."""
+    from kri.llm.formatter import extract_hunk_context
+
+    diff = (
+        "diff --git a/drivers/x/foo.c b/drivers/x/foo.c\n"
+        "@@ -10,5 +10,6 @@\n"
+        " int a;\n"
+        " int b;\n"
+        "+int c;\n"
+        " int d;\n"
+        " int e;\n"
+    )
+    lines = diff.splitlines()
+    result = extract_hunk_context(lines, "drivers/x/foo.c", 12, window=1)
+    assert len(result) <= 3
+    assert any("int c" in ln for ln in result)
+
+
+def test_extract_hunk_context_wrong_file_returns_empty() -> None:
+    """When file_path does not match any diff --git header, returns empty list."""
+    from kri.llm.formatter import extract_hunk_context
+
+    diff = (
+        "diff --git a/drivers/x/foo.c b/drivers/x/foo.c\n"
+        "@@ -1,2 +1,3 @@\n"
+        " int a;\n"
+        "+int b;\n"
+    )
+    lines = diff.splitlines()
+    result = extract_hunk_context(lines, "drivers/x/bar.c", 2)
+    assert result == []
+
+
+def test_extract_hunk_context_skips_removed_lines() -> None:
+    """Removed lines (starting with '-') must not appear in context."""
+    from kri.llm.formatter import extract_hunk_context
+
+    diff = (
+        "diff --git a/drivers/x/foo.c b/drivers/x/foo.c\n"
+        "@@ -1,3 +1,3 @@\n"
+        " int keep;\n"
+        "-int removed;\n"
+        "+int added;\n"
+    )
+    lines = diff.splitlines()
+    result = extract_hunk_context(lines, "drivers/x/foo.c", 2, window=2)
+    assert all(not ln.startswith("-") for ln in result)
