@@ -156,3 +156,44 @@ def test_is_patch_property_true_for_genuine_patch() -> None:
     """Unit test for Message.is_patch — genuine patch returns True."""
     msg = _make_patch_msg("patch-3@x", seq=1, total=1)
     assert msg.is_patch is True
+
+
+def test_correlate_reviews_returns_empty_without_lore_manager() -> None:
+    """correlate_reviews degrades gracefully when no LoreManager is injected."""
+    from kri.patch_manager import PatchManagerImpl
+
+    pm = PatchManagerImpl()  # no lore_manager
+    patch = Patch(patch_id="p-a", subject="core: thing", diff="", files_changed=[])
+    series = PatchSeries(
+        series_id="p-a",
+        title="thing",
+        patches=[patch],
+        version=1,
+    )
+    result = pm.correlate_reviews(series)
+    assert result == {"p-a": []}, "no lore_manager => all patches get empty review lists"
+
+
+def test_extract_versions_multi_version_patches() -> None:
+    """extract_versions returns all distinct vN values across patch subjects."""
+    from kri.patch_manager import PatchManagerImpl
+
+    pm = PatchManagerImpl()
+    p1 = Patch(patch_id="p1", subject="[PATCH v2 1/2] a", diff="", files_changed=[])
+    p2 = Patch(patch_id="p2", subject="[PATCH v3 2/2] b", diff="", files_changed=[])
+    series = PatchSeries(series_id="p1", title="a", patches=[p1, p2], version=2)
+    versions = pm.extract_versions(series)
+    assert versions == [2, 3]
+
+
+def test_parse_thread_with_only_replies_yields_empty_patches() -> None:
+    """A thread that contains only reviewer replies and no patch messages must
+    produce a PatchSeries with an empty patches list rather than crashing."""
+    from kri.patch_manager import PatchManagerImpl
+
+    reply_msg = _make_reply_msg("reply-only@x", in_reply_to="original@x")
+    thread = Thread(thread_id="original@x", messages=[reply_msg])
+    pm = PatchManagerImpl()
+    series = pm.parse(thread)
+    assert series.patches == [], "reply-only thread must produce empty patch list"
+    assert series.series_id == "original@x"
