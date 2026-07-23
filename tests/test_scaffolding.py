@@ -90,3 +90,32 @@ def test_all_module_packages_importable() -> None:
     kri_root = Path(kri.__file__).parent
     for mod in pkgutil.iter_modules([str(kri_root)]):
         __import__(f"kri.{mod.name}")
+
+
+def test_kernel_version_sort_key_rc_sorts_before_release() -> None:
+    """RC versions must sort before the final release of the same x.y.z."""
+    from kri.common.models import KernelVersion
+
+    v_rc1 = KernelVersion(raw="6.9-rc1", major=6, minor=9, rc=1)
+    v_final = KernelVersion(raw="6.9", major=6, minor=9)
+    assert v_rc1.sort_key() < v_final.sort_key()
+
+
+def test_kernel_version_sort_key_orders_major_minor() -> None:
+    """Major/minor ordering must be numeric, not lexicographic."""
+    from kri.common.models import KernelVersion
+
+    v_68 = KernelVersion(raw="6.8", major=6, minor=8)
+    v_69 = KernelVersion(raw="6.9", major=6, minor=9)
+    v_610 = KernelVersion(raw="6.10", major=6, minor=10)
+    keys = [v_610.sort_key(), v_68.sort_key(), v_69.sort_key()]
+    assert sorted(keys) == [v_68.sort_key(), v_69.sort_key(), v_610.sort_key()]
+
+
+def test_version_range_open_ended_has_none_until() -> None:
+    """VersionRange with valid_until=None means 'still valid at HEAD'."""
+    from kri.common.models import KernelVersion, VersionRange
+
+    v = KernelVersion(raw="6.9", major=6, minor=9)
+    vr = VersionRange(valid_from=v)
+    assert vr.valid_until is None
