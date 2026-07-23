@@ -118,6 +118,7 @@ class ReducerActionKind(str, Enum):
     R2_SERIES_PRESENT_SUPPRESS = "series_present_suppress"
     R3_EXTERNAL_TO_INTERNAL_REWRITE = "external_to_internal_rewrite"
     R4_LINE_BUCKET_MERGE = "line_bucket_merge"
+    R4_LINE_BUCKET_ANNOTATE = "line_bucket_annotate"
     R5_FUNCTION_SCOPE_MERGE = "function_scope_merge"
     R6_LOW_SIGNAL_SUPPRESS = "low_signal_suppress"
     R7_PRE_EXISTING_SUPPRESS = "pre_existing_suppress"

@@ -548,9 +548,14 @@ class SeriesReducer:
 
         Design points:
           - Safety-floored findings (blockers, high-conf warnings) are
-            EXCLUDED from bucketing entirely — they never absorb siblings
+            EXCLUDED from destructive bucketing — they never absorb siblings
             and never get absorbed. Merging them would either delete a
             blocker (forbidden) or hide siblings behind one (info loss).
+          - When ALL members of a bucket are floored (post_floor=0 but
+            pre_floor>0), R4 emits an R4_LINE_BUCKET_ANNOTATE action instead
+            of R4_LINE_BUCKET_MERGE. The floored findings are tagged with
+            series_prefix (no suppression) so the maintainer sees the
+            cluster relationship without losing any finding.
           - "Category-class" collapses ``{convention, style, nit}`` to a
             single bucket via ``_same_category`` — spec §6.4 permits
             cross-soft merging.
@@ -560,12 +565,14 @@ class SeriesReducer:
             deterministic across replays.
         """
         buckets: dict[tuple[str, int, str], list[InlineComment]] = {}
+        floored_buckets: dict[tuple[str, int, str], list[InlineComment]] = {}
         for comment in comments:
-            if self._is_safety_floored(comment):
-                continue
             cat_class = "_soft" if comment.category in _SOFT_CATEGORIES else comment.category
             key = (comment.file_path, comment.line_number // 10, cat_class)
-            buckets.setdefault(key, []).append(comment)
+            if self._is_safety_floored(comment):
+                floored_buckets.setdefault(key, []).append(comment)
+            else:
+                buckets.setdefault(key, []).append(comment)
 
         actions: list[ReducerAction] = []
         for cluster in buckets.values():
@@ -587,6 +594,27 @@ class SeriesReducer:
                     related_patch_id="",
                 )
             )
+
+        # Soft annotation: floored buckets where no non-floored candidate
+        # exists. Emit one annotate action per floored cluster of size ≥ 2.
+        for key, cluster in floored_buckets.items():
+            if len(cluster) < 2:
+                continue
+            if key in buckets:
+                continue  # mixed bucket; merge side already handles it
+            ordered = sorted(cluster, key=lambda c: -c.confidence)
+            actions.append(
+                ReducerAction(
+                    kind=ReducerActionKind.R4_LINE_BUCKET_ANNOTATE,
+                    patch_id=patch_id,
+                    finding_ref=_comment_ref(ordered[0]),
+                    file=ordered[0].file_path,
+                    line=ordered[0].line_number,
+                    reason=f"floored_cluster_size={len(cluster)}",
+                    absorbed_refs=tuple(_comment_ref(c) for c in ordered),
+                    related_patch_id="",
+                )
+            )
         return actions
 
     def _apply_R4(
@@ -594,27 +622,37 @@ class SeriesReducer:
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        """Fold absorbed siblings into their keeper's message and drop
-        them from the list.  New list is returned; original inputs are
-        not mutated."""
+        """Apply R4 merge and annotate actions. New list returned; inputs not mutated.
+
+        MERGE: absorbed siblings are dropped; their snippet is appended to the
+        keeper's message as "Related remark: …".
+
+        ANNOTATE: all cluster members remain; each gets series_prefix set to
+        "[floored-cluster] " (no suppression). An existing series_prefix (e.g.
+        from R3) is preserved — no double-tagging.
+        """
         if not actions:
             return comments
 
+        merge_actions = [
+            a for a in actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE
+        ]
+        annotate_actions = [
+            a for a in actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE
+        ]
+
         keeper_updates: dict[str, list[str]] = {}
         drop_refs: set[str] = set()
-        for a in actions:
+        for a in merge_actions:
             drop_refs.update(a.absorbed_refs)
             # setdefault (NOT bare assign) so two actions targeting the
-            # same keeper — invariant-forbidden today but not enforced
-            # in code — accumulate their snippets instead of the second
-            # action clobbering the first's list.
+            # same keeper accumulate their snippets instead of clobbering.
             keeper_updates.setdefault(a.finding_ref, [])
 
-        # Build a ref → comment map once so we can pull the absorbed
-        # texts to compose the "Related remark:" tail on each keeper.
+        # Build ref → comment map once for absorbed-snippet lookup.
         ref_to_cmt = {_comment_ref(c): c for c in comments}
 
-        for a in actions:
+        for a in merge_actions:
             for absorbed_ref in a.absorbed_refs:
                 absorbed = ref_to_cmt.get(absorbed_ref)
                 if absorbed is None:
@@ -622,6 +660,10 @@ class SeriesReducer:
                 snippet = absorbed.upstream_comment or absorbed.message or ""
                 if snippet:
                     keeper_updates[a.finding_ref].append(snippet)
+
+        annotate_refs: set[str] = set()
+        for a in annotate_actions:
+            annotate_refs.update(a.absorbed_refs)
 
         out: list[InlineComment] = []
         for c in comments:
@@ -632,6 +674,8 @@ class SeriesReducer:
             if snippets:
                 tail = "".join(f"\nRelated remark: {s}" for s in snippets)
                 out.append(c.model_copy(update={"message": (c.message or "") + tail}))
+            elif ref in annotate_refs and not c.series_prefix:
+                out.append(c.model_copy(update={"series_prefix": "[floored-cluster] "}))
             else:
                 out.append(c)
         return out

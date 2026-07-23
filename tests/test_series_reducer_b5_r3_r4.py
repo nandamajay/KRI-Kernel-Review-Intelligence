@@ -686,3 +686,135 @@ def test_comment_ref_format_is_path_colon_line_colon_hex() -> None:
     c = _cmt(file_path="drivers/x/a.c", line_number=42, category="style", message="x")
     ref = _comment_ref(c)
     assert re.fullmatch(r"drivers/x/a\.c:42:[0-9a-f]{16}", ref), f"unexpected format: {ref!r}"
+
+
+# ---------------------------------------------------------------------------
+# R4 annotate — floored-only clusters
+# ---------------------------------------------------------------------------
+
+
+def test_R4_annotate_fires_when_all_bucket_candidates_are_floored():
+    """When ALL bucket members are safety-floored, R4 must emit an
+    R4_LINE_BUCKET_ANNOTATE action (not MERGE) and keep every comment."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    # Two high-confidence warnings on adjacent lines — both floored.
+    w1 = _cmt(
+        message="warning alpha", line_number=10, confidence=0.8,
+        severity=Severity.WARNING,
+    )
+    w2 = _cmt(
+        message="warning beta", line_number=14, confidence=0.75,
+        severity=Severity.WARNING,
+    )
+    result = reducer.reduce(patch_id="p1", comments=[w1, w2], series_ctx=ctx, mode="on")
+
+    merge_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    annotate_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE]
+    assert len(merge_actions) == 0, "floored cluster must not produce a MERGE action"
+    assert len(annotate_actions) == 1
+
+    # Both comments must survive — no suppression.
+    assert len(result.comments) == 2
+
+
+def test_R4_annotate_tags_all_floored_cluster_members_with_series_prefix():
+    """Every member of a floored cluster gets series_prefix='[floored-cluster] '."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    w1 = _cmt(message="warn1", line_number=10, confidence=0.8, severity=Severity.WARNING)
+    w2 = _cmt(message="warn2", line_number=12, confidence=0.7, severity=Severity.WARNING)
+    result = reducer.reduce(patch_id="p1", comments=[w1, w2], series_ctx=ctx, mode="on")
+
+    for c in result.comments:
+        assert c.series_prefix == "[floored-cluster] ", (
+            f"expected floored-cluster prefix, got {c.series_prefix!r} on {c.message!r}"
+        )
+
+
+def test_R4_annotate_does_not_overwrite_existing_series_prefix():
+    """A floored comment that already has a series_prefix (e.g. from R3)
+    must not have its prefix clobbered by the R4 annotate pass."""
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
+    # R3 should fire on this — it has a trigger phrase for an external dep.
+    w1 = _cmt(
+        message="waiting on another patch to add foo,bar-sndcard — it is not defined yet",
+        line_number=10, confidence=0.85, severity=Severity.WARNING,
+        file_path="drivers/a/x.c",
+    )
+    # Second floored comment in the same bucket.
+    w2 = _cmt(
+        message="another warning same bucket",
+        line_number=14, confidence=0.75, severity=Severity.WARNING,
+        file_path="drivers/a/x.c",
+    )
+    result = reducer.reduce(patch_id="p1", comments=[w1, w2], series_ctx=ctx, mode="on")
+
+    # w1 was processed by R3 first → it has a "Depends on patch" prefix.
+    tagged_w1 = next(c for c in result.comments if "foo,bar-sndcard" in c.message)
+    assert tagged_w1.series_prefix.startswith("Depends on patch"), (
+        f"R3 prefix should be preserved, got {tagged_w1.series_prefix!r}"
+    )
+
+
+def test_R4_merge_and_annotate_coexist_in_same_reduce_call():
+    """One bucket has only unfloored candidates (→ MERGE) and another has
+    only floored candidates (→ ANNOTATE). Both actions must be emitted
+    and the output must have the right shape."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    # Unfloored cluster → MERGE
+    u1 = _cmt(
+        message="unfloored-a", line_number=20, confidence=0.5,
+        file_path="drivers/a/x.c",
+    )
+    u2 = _cmt(
+        message="unfloored-b", line_number=22, confidence=0.45,
+        file_path="drivers/a/x.c",
+    )
+    # Floored cluster → ANNOTATE (different file keeps buckets separate)
+    f1 = _cmt(
+        message="floored-a", line_number=30, confidence=0.8,
+        severity=Severity.WARNING, file_path="drivers/b/y.c",
+    )
+    f2 = _cmt(
+        message="floored-b", line_number=32, confidence=0.75,
+        severity=Severity.WARNING, file_path="drivers/b/y.c",
+    )
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[u1, u2, f1, f2],
+        series_ctx=ctx,
+        mode="on",
+    )
+
+    merge_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    annotate_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE]
+    assert len(merge_actions) == 1, "unfloored cluster must produce exactly one MERGE"
+    assert len(annotate_actions) == 1, "floored cluster must produce exactly one ANNOTATE"
+
+    # Unfloored cluster: 2 in → 1 out (keeper + absorbed).
+    unfloored_out = [c for c in result.comments if c.file_path == "drivers/a/x.c"]
+    assert len(unfloored_out) == 1, "MERGE must absorb the lower-confidence sibling"
+    assert "unfloored-b" in unfloored_out[0].message  # absorbed snippet in tail
+
+    # Floored cluster: 2 in → 2 out (no suppression).
+    floored_out = [c for c in result.comments if c.file_path == "drivers/b/y.c"]
+    assert len(floored_out) == 2, "ANNOTATE must keep all floored members"
+    for c in floored_out:
+        assert c.series_prefix == "[floored-cluster] "
+
+
+def test_R4_annotate_singleton_floored_bucket_no_action():
+    """A single floored finding in its line bucket produces no action —
+    it's not a cluster; nothing to annotate."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    w = _cmt(message="solo warning", line_number=50, confidence=0.9, severity=Severity.WARNING)
+    result = reducer.reduce(patch_id="p1", comments=[w], series_ctx=ctx, mode="on")
+
+    annotate_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE]
+    assert len(annotate_actions) == 0
+    assert len(result.comments) == 1
+    assert result.comments[0].series_prefix == ""
