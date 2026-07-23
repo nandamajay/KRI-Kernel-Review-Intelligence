@@ -546,3 +546,98 @@ def test_R4_bucketing_identical_with_and_without_R3_on_non_trigger_pair():
     assert len(result.comments) == 1
     keeper = result.comments[0]
     assert keeper.line_number == 44  # higher confidence (0.6 > 0.4)
+
+
+# ---------------------------------------------------------------------------
+# R4 _apply_R4 edge case: absorbed comment with empty message + no upstream
+# ---------------------------------------------------------------------------
+
+
+def test_R4_apply_absorbed_empty_message_does_not_extend_keeper():
+    """When the absorbed comment has an empty message AND no upstream_comment,
+    _apply_R4 must NOT append a 'Related remark:' tail to the keeper.
+
+    The absorbed comment is still dropped from output — R4 merge happened.
+    The keeper's message must be exactly the original message with no
+    trailing newlines or empty remark lines.
+
+    Code path: _apply_R4 lines 653-655:
+      snippet = absorbed.upstream_comment or absorbed.message or ""
+      if snippet:
+          keeper_updates[a.finding_ref].append(snippet)
+    → empty string → not appended → keeper_updates[keeper_ref] == []
+    → 'if snippets:' is False → keeper.message not modified.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx()
+
+    keeper_cmt = _cmt(message="substantive finding here", line_number=42, confidence=0.8)
+    # Absorbed: both message and upstream_comment are empty/absent.
+    absorbed_cmt = InlineComment(
+        file_path="drivers/x/foo.c",
+        line_number=44,
+        message="",
+        upstream_comment=None,
+        severity=Severity.INFO,
+        confidence=0.3,
+        category="convention",
+    )
+
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[keeper_cmt, absorbed_cmt],
+        series_ctx=ctx,
+        mode="on",
+    )
+
+    r4_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    assert len(r4_actions) == 1, "R4 must still emit a merge action"
+    assert len(result.comments) == 1, "Absorbed comment must be dropped from output"
+
+    keeper = result.comments[0]
+    assert keeper.confidence == 0.8, "Keeper must be the higher-confidence comment"
+    assert keeper.message == "substantive finding here", (
+        "Keeper message must be unchanged when absorbed has no snippet to append. "
+        "If this fails, _apply_R4 is appending empty or whitespace-only remark lines."
+    )
+    assert "Related remark:" not in keeper.message, (
+        "No 'Related remark:' must appear when absorbed snippet is empty"
+    )
+
+
+def test_R4_apply_absorbed_upstream_comment_takes_priority_over_message():
+    """When absorbed has both upstream_comment and message, upstream_comment
+    is used as the snippet (OR short-circuit: absorbed.upstream_comment or
+    absorbed.message).
+
+    The 'Related remark:' tail should contain the upstream_comment text,
+    not the message text.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx()
+
+    keeper_cmt = _cmt(message="main finding", line_number=42, confidence=0.7)
+    absorbed_cmt = _cmt(
+        message="secondary finding",
+        upstream_comment="reviewer already flagged this in v1",
+        line_number=44,
+        confidence=0.4,
+    )
+
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[keeper_cmt, absorbed_cmt],
+        series_ctx=ctx,
+        mode="on",
+    )
+
+    r4_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    assert len(r4_actions) == 1
+    assert len(result.comments) == 1
+    keeper = result.comments[0]
+
+    # upstream_comment is used as snippet (takes priority via OR chain).
+    assert "reviewer already flagged this in v1" in keeper.message
+    assert "Related remark: reviewer already flagged this in v1" in keeper.message
+    # message field of absorbed NOT in the tail (upstream_comment won the OR).
+    assert "secondary finding" not in keeper.message
