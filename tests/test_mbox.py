@@ -145,3 +145,36 @@ def test_parse_maintainers() -> None:
     assert idx.is_maintainer(None, "Jane Doe") is False
     assert idx.is_maintainer("someone@kernel.org", "Jane Doe") is True
     assert idx.is_maintainer("jane@evil.example", "Jane Doe") is False
+
+
+def test_split_commit_message_no_scissors_separator() -> None:
+    """When no '---' line is present the commit message ends at the diff header."""
+    body = "Fix the bug\n\nSigned-off-by: X <x@y>\ndiff --git a/f.c b/f.c\n@@ -1 +1 @@\n"
+    msg, diff = split_commit_message_and_diff(body)
+    assert "Signed-off-by" in msg
+    assert diff.startswith("diff --git a/f.c b/f.c")
+
+
+def test_split_commit_message_no_diff_at_all() -> None:
+    """When body has no diff at all, commit_message is the full body and diff is empty."""
+    body = "Just a message\n\nNo diff here."
+    msg, diff = split_commit_message_and_diff(body)
+    assert msg == "Just a message\n\nNo diff here."
+    assert diff == ""
+
+
+def test_files_from_diff_deleted_file_uses_a_side() -> None:
+    """For a deleted file the b/ side is /dev/null; a/ side must be returned."""
+    diff = "diff --git a/old.c b/old.c\ndeleted file mode 100644\n--- a/old.c\n+++ /dev/null\n"
+    assert files_from_diff(diff) == ["old.c"]
+
+
+def test_parse_subject_rfc_patch_variant() -> None:
+    """[RFC PATCH ...] prefix should set is_patch=True."""
+    info = parse_subject("[RFC PATCH v2 1/3] net: add helper")
+    assert info.is_patch is True
+    assert info.is_reply is False
+    assert info.version == 2
+    assert info.sequence == 1
+    assert info.series_total == 3
+    assert info.clean == "net: add helper"
