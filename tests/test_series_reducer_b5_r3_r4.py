@@ -641,3 +641,45 @@ def test_R4_apply_absorbed_upstream_comment_takes_priority_over_message():
     assert "Related remark: reviewer already flagged this in v1" in keeper.message
     # message field of absorbed NOT in the tail (upstream_comment won the OR).
     assert "secondary finding" not in keeper.message
+
+
+# ---------------------------------------------------------------------------
+# _comment_ref unit tests — content hash stability
+# ---------------------------------------------------------------------------
+
+
+def test_comment_ref_stable_for_identical_comment() -> None:
+    """_comment_ref must return the same string for two equal InlineComment objects."""
+    from kri.series.reducer import _comment_ref
+
+    c1 = _cmt(file_path="drivers/x/a.c", line_number=10, category="convention", message="m1")
+    c2 = _cmt(file_path="drivers/x/a.c", line_number=10, category="convention", message="m1")
+    assert _comment_ref(c1) == _comment_ref(c2)
+
+
+def test_comment_ref_changes_on_message_change() -> None:
+    """_comment_ref must differ when message changes (content-hash property)."""
+    from kri.series.reducer import _comment_ref
+
+    c1 = _cmt(file_path="drivers/x/a.c", line_number=10, category="convention", message="msg-a")
+    c2 = _cmt(file_path="drivers/x/a.c", line_number=10, category="convention", message="msg-b")
+    assert _comment_ref(c1) != _comment_ref(c2)
+
+
+def test_comment_ref_changes_on_line_change() -> None:
+    """_comment_ref must differ when line_number changes."""
+    from kri.series.reducer import _comment_ref
+
+    c1 = _cmt(file_path="drivers/x/a.c", line_number=10, category="convention", message="msg")
+    c2 = _cmt(file_path="drivers/x/a.c", line_number=11, category="convention", message="msg")
+    assert _comment_ref(c1) != _comment_ref(c2)
+
+
+def test_comment_ref_format_is_path_colon_line_colon_hex() -> None:
+    """_comment_ref must have the format 'file_path:line_number:<16-char hex>'."""
+    from kri.series.reducer import _comment_ref
+    import re
+
+    c = _cmt(file_path="drivers/x/a.c", line_number=42, category="style", message="x")
+    ref = _comment_ref(c)
+    assert re.fullmatch(r"drivers/x/a\.c:42:[0-9a-f]{16}", ref), f"unexpected format: {ref!r}"
