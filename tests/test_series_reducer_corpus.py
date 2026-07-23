@@ -321,14 +321,14 @@ def test_R3_fires_on_not_yet_merged_prose_when_series_declares_it():
         f"R3 must attribute the rewrite to the declaring sibling p1. "
         f"Got: {r3_actions[0].related_patch_id}"
     )
-    # The comment is rewritten, not dropped.
+    # The comment is tagged, not dropped.
     assert len(result.comments) == 1
     rewritten = result.comments[0]
-    assert rewritten.message.startswith("Depends on patch p1: "), (
-        f"Rewritten message must begin with 'Depends on patch p1: '. "
-        f"Got: {rewritten.message[:60]!r}"
+    assert rewritten.series_prefix == "Depends on patch p1: ", (
+        f"series_prefix must be 'Depends on patch p1: '. "
+        f"Got: {rewritten.series_prefix!r}"
     )
-    # The original concern is preserved after the prefix.
+    # The original concern is preserved in message (C4 fix: message unchanged).
     assert "thundercomm,qcs6490-rubikpi3-sndcard" in rewritten.message
 
 
@@ -352,7 +352,7 @@ def test_R3_fires_on_waiting_on_prose_same_series():
 
     r3_actions = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
     assert len(r3_actions) == 1
-    assert result.comments[0].message.startswith("Depends on patch p1: ")
+    assert result.comments[0].series_prefix == "Depends on patch p1: "
 
 
 def test_R3_shadow_mode_records_action_without_rewriting_corpus_prose():
@@ -562,7 +562,7 @@ def test_full_series_pass_rubikpi3_patch5_shape():
       - f53: R1 suppression case — INFO 0.65 'missing binding'; declared in
              p1; suppressed by R1.  DROPPED.
       - f_r3: R3 rewrite case — 'not-yet-merged binding'; declared in p1;
-              rewritten by R3 with 'Depends on patch p1: ' prefix.  SURVIVES.
+              tagged by R3 with series_prefix='Depends on patch p1: '.  SURVIVES.
       - f_r4a: R4 first candidate — INFO 0.65 IRQ polarity; not safety-floored.
       - f_r4b: R4 second candidate — INFO 0.60 IRQ polarity; not safety-floored;
                same line-bucket as f_r4a.  MERGED into f_r4a.
@@ -570,7 +570,7 @@ def test_full_series_pass_rubikpi3_patch5_shape():
 
     Expected output (4 comments):
       1. f52  — WARNING preserved by safety floor
-      2. f_r3 — R3-rewritten ("Depends on patch p1: ...")
+      2. f_r3 — R3-tagged (series_prefix='Depends on patch p1: ', message unchanged)
       3. f_r4a — R4 keeper (absorbed f_r4b; "Related remark:" tail)
       4. f_keep — unaffected
 
@@ -654,9 +654,9 @@ def test_full_series_pass_rubikpi3_patch5_shape():
         "f52 (WARNING 0.72) must survive — safety floor prevents R1 suppression"
     )
 
-    # R3-rewritten comment must carry the prefix.
-    assert any(m.startswith("Depends on patch p1: ") for m in messages), (
-        "R3-rewritten comment must have 'Depends on patch p1: ' prefix"
+    # R3-tagged comment must carry the series_prefix (C4 fix: message unchanged).
+    assert any(c.series_prefix == "Depends on patch p1: " for c in result.comments), (
+        "R3-tagged comment must have series_prefix='Depends on patch p1: '"
     )
 
     # R4 keeper must carry absorbed text.

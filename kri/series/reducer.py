@@ -522,14 +522,11 @@ class SeriesReducer:
             if matched_symbol is None:
                 continue
 
-            # Do not re-rewrite an already-rewritten finding. Idempotence
-            # guard against the same reducer being applied twice (e.g.
-            # replay tooling) — the prefix "Depends on patch <pid>: " is
-            # what _apply_R3 emits.
-            already_rewritten = (comment.message or "").lower().startswith(
-                f"depends on patch {declaring_patch or ''}:".lower()
-            )
-            if already_rewritten:
+            # Do not re-tag an already-tagged finding. Idempotence guard
+            # against the same reducer being applied twice (e.g. replay
+            # tooling) — after the C4 fix, the tag lives in series_prefix.
+            already_tagged = bool(comment.series_prefix)
+            if already_tagged:
                 continue
 
             actions.append(
@@ -550,10 +547,12 @@ class SeriesReducer:
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        """Rewrite matched comments' ``message`` to name the declaring
-        sibling patch. Returns a NEW list of comments (via
-        ``model_copy``) so the input list is not mutated in place —
-        matters if a caller retained a reference to it."""
+        """Tag matched comments with ``series_prefix`` naming the declaring
+        sibling patch. Returns a NEW list of comments (via ``model_copy``)
+        so the input list is not mutated in place — matters if a caller
+        retained a reference to it. ``message`` is left intact (C4 fix:
+        writing to ``series_prefix`` avoids contaminating the content-hash
+        used by downstream rules)."""
         if not actions:
             return comments
         rewrites: dict[str, str] = {a.finding_ref: a.related_patch_id for a in actions}
@@ -562,8 +561,7 @@ class SeriesReducer:
             ref = _comment_ref(c)
             sibling = rewrites.get(ref)
             if sibling:
-                new_msg = f"Depends on patch {sibling}: {c.message}"
-                out.append(c.model_copy(update={"message": new_msg}))
+                out.append(c.model_copy(update={"series_prefix": f"Depends on patch {sibling}: "}))
             else:
                 out.append(c)
         return out

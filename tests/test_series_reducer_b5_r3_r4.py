@@ -1,10 +1,11 @@
 """WP-S1B Step B5 — R3 external-to-internal rewrite + R4 line-bucket dedup.
 
-R3 (readiness spec §5.R3): rewrite a finding that flags an external
+R3 (readiness spec §5.R3): tag a finding that flags an external
 dependency when a sibling patch in this series actually declares it.
-The finding is NOT dropped — its message is prefixed with
-"Depends on patch <sibling>: ..." so the maintainer knows the reviewer's
-complaint is already satisfied within this series.
+The finding is NOT dropped — its ``series_prefix`` is set to
+"Depends on patch <sibling>: " (C4 fix: ``message`` is no longer mutated)
+so the maintainer knows the reviewer's complaint is already satisfied
+within this series.
 
 R4 (readiness spec §5.R4): cluster findings by (file, line // 10,
 category-class) and fold size-≥2 clusters into a single keeper (max
@@ -13,7 +14,7 @@ confidence) with the absorbed siblings' text appended as
 bucketing so blockers and high-confidence warnings never disappear.
 
 Rule sequencing: the reducer runs R1 → R3 → R4 (§5.2 / readiness §6.3).
-R3 mutates ``message`` via a NEW InlineComment; R4 folds absorbed
+R3 sets ``series_prefix`` via a NEW InlineComment; R4 folds absorbed
 comments' text into the keeper. Both operations use content-hash
 :func:`_comment_ref` so evaluate/apply stay in sync across reordering.
 """
@@ -77,6 +78,7 @@ def _cmt(
     severity: Severity = Severity.INFO,
     confidence: float = 0.5,
     category: str = "convention",
+    series_prefix: str = "",
 ) -> InlineComment:
     return InlineComment(
         file_path=file_path,
@@ -86,6 +88,7 @@ def _cmt(
         severity=severity,
         confidence=confidence,
         category=category,
+        series_prefix=series_prefix,
     )
 
 
@@ -111,7 +114,7 @@ def test_R3_shadow_records_action_without_mutating_message():
 
 
 def test_R3_on_mode_prepends_depends_on_prefix():
-    """mode='on': keeper survives but its message gains the prefix."""
+    """mode='on': comment gains series_prefix naming the sibling patch (C4 fix: message unchanged)."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
     cmt = _cmt(message="requires the not-yet-merged foo,bar-sndcard binding")
@@ -121,7 +124,9 @@ def test_R3_on_mode_prepends_depends_on_prefix():
     )
     assert len(result.comments) == 1
     rewritten = result.comments[0]
-    assert rewritten.message.startswith("Depends on patch p2: ")
+    assert rewritten.series_prefix == "Depends on patch p2: "
+    # message is preserved intact — C4 fix: no longer mutated by _apply_R3.
+    assert rewritten.message == "requires the not-yet-merged foo,bar-sndcard binding"
     assert "foo,bar-sndcard" in rewritten.message
     # Original object is untouched (model_copy semantics).
     assert cmt.message == "requires the not-yet-merged foo,bar-sndcard binding"
@@ -170,25 +175,26 @@ def test_R3_blocker_gets_rewritten_but_not_dropped():
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
     )
     assert len(result.comments) == 1
-    assert result.comments[0].message.startswith("Depends on patch p2: ")
+    assert result.comments[0].series_prefix == "Depends on patch p2: "
     assert result.comments[0].severity == Severity.BLOCKER
 
 
-def test_R3_idempotent_on_already_rewritten_message():
+def test_R3_idempotent_on_already_tagged_comment():
     """If R3 has already run once (e.g. replay tooling reruns the
-    reducer against its own output), the prefix guard skips it — no
-    second "Depends on patch p2:" appended."""
+    reducer against its own output), the series_prefix guard skips it —
+    no double-tagging when series_prefix is already set."""
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"foo,bar-sndcard": "p2"})
     cmt = _cmt(
-        message="Depends on patch p2: waiting on another patch for foo,bar-sndcard",
+        message="waiting on another patch for foo,bar-sndcard",
+        series_prefix="Depends on patch p2: ",
     )
     result = reducer.reduce(
         patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on"
     )
     r3 = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
     assert r3 == []
-    assert result.comments[0].message.count("Depends on patch p2: ") == 1
+    assert result.comments[0].series_prefix == "Depends on patch p2: "
 
 
 def test_R3_no_action_on_negated_phrasing():
@@ -408,8 +414,8 @@ def test_R1_then_R3_then_R4_sequenced_cleanly():
     )
     # R1 killed one.
     assert not any("foo,bar-sndcard" in c.message for c in result.comments)
-    # R3 rewrote one.
-    assert any(c.message.startswith("Depends on patch p3: ") for c in result.comments)
+    # R3 rewrote one (series_prefix set; message unchanged).
+    assert any(c.series_prefix == "Depends on patch p3: " for c in result.comments)
     # R4 folded the pair down to one keeper.
     survivors_by_line = {c.line_number: c for c in result.comments}
     assert 44 in survivors_by_line  # keeper's line (max conf 0.6)
@@ -429,11 +435,10 @@ def test_R1_then_R3_then_R4_sequenced_cleanly():
 # (file, line // 10, category-class) and MUST NOT change when R3 fires
 # on one of the two bucket candidates.
 #
-# This locks the invariant that _evaluate_R4 keys on line-bucket + category,
-# never on message content. When R3 prepends "Depends on patch <pid>: " to
-# one comment's .message (current behaviour, pending C4 fix), the prefix
-# changes that comment's content-hash ref but MUST NOT prevent R4 from
-# seeing both comments in the same bucket.
+# After the C4 fix: _apply_R3 writes to series_prefix (not message), so
+# the content-hash is stable. R4 bucketing and _comment_ref are both
+# derived from message, so neither is affected by R3. These tests confirm
+# the invariant holds both before and after the fix.
 # ---------------------------------------------------------------------------
 
 
@@ -446,17 +451,14 @@ def test_R4_bucketing_unaffected_when_R3_fires_on_one_candidate():
       hit bucket key (file, 4, "convention")) and the same category.
     - comment_a has a phrase that triggers R3 ("waiting on another patch
       to add <declared symbol>"); comment_b has no such phrase.
-    - R3 fires on comment_a only → prepends "Depends on patch p2: " to
-      its message, changing its content-hash ref.
+    - R3 fires on comment_a only → sets series_prefix (C4 fix: message
+      is NOT changed, so content-hash is stable across R3).
     - R4 evaluates the post-R3 working list; both comments are still in
       the same (file, line//10, category-class) bucket → R4 must still
       emit one R4 merge action.
     - The absorbed comment is the lower-confidence one (comment_a,
       conf=0.5) and the keeper is comment_b (conf=0.7).  Both are in
       "convention" — no safety floor.
-
-    The test would fail if R4 used message content for bucketing, because
-    after R3 the two comments have different message prefixes.
     """
     reducer = SeriesReducer()
     ctx = _ctx(compatibles={"baz,quux-codec": "p2"})
@@ -488,12 +490,15 @@ def test_R4_bucketing_unaffected_when_R3_fires_on_one_candidate():
 
     # R3 must have fired on comment_a only.
     assert len(r3_actions) == 1, f"Expected 1 R3 action, got {len(r3_actions)}"
+    # comment_a's series_prefix must be set; message is unchanged (C4 fix).
+    r3_cmt = next(c for c in result.comments if c.line_number == 42) if len(result.comments) > 1 else None
+    # (After R4 merge, there is only one comment — the keeper. Check via the action.)
+    assert r3_actions[0].related_patch_id == "p2"
 
     # R4 must still merge the pair — structural bucketing is independent of
-    # message content, so the "Depends on patch p2: " prefix R3 added to
-    # comment_a's message must not affect R4's decision.
+    # message content, so R3 setting series_prefix must not affect R4's decision.
     assert len(r4_actions) == 1, (
-        f"Expected 1 R4 merge action after R3 modified one candidate's message, "
+        f"Expected 1 R4 merge action after R3 tagged one candidate, "
         f"got {len(r4_actions)}.  If this is 0, R4 is accidentally keying on "
         f"message content or the line-bucket key changed."
     )
@@ -505,15 +510,13 @@ def test_R4_bucketing_unaffected_when_R3_fires_on_one_candidate():
     assert "driver_register" in keeper.message
 
     # The absorbed comment (comment_a) should appear as a "Related remark".
-    # Because R3 already rewrote comment_a's message, the snippet that R4
-    # appends to the keeper reflects the post-R3 prefix.  This asserts that
-    # the ref chain is internally consistent within one reduce() call.
+    # After the C4 fix, R3 sets series_prefix not message, so the absorbed
+    # snippet reflects the original (un-prefixed) message content.
     assert "Related remark:" in keeper.message, (
         "R4 should have appended the absorbed comment's text to the keeper"
     )
-    # The absorbed snippet contains the R3-rewritten prefix — confirms R4
-    # absorbed refs are computed from the post-R3 working list (consistent).
-    assert "Depends on patch p2:" in keeper.message or "baz,quux-codec" in keeper.message
+    # Original message content ("baz,quux-codec") appears in the absorbed snippet.
+    assert "baz,quux-codec" in keeper.message
 
 
 def test_R4_bucketing_identical_with_and_without_R3_on_non_trigger_pair():
