@@ -422,3 +422,127 @@ def test_R1_then_R3_then_R4_sequenced_cleanly():
     assert len(r1_actions) == 1
     assert len(r3_actions) == 1
     assert len(r4_actions) == 1
+
+
+# ---------------------------------------------------------------------------
+# C4 companion: R4 bucketing decision is structurally determined
+# (file, line // 10, category-class) and MUST NOT change when R3 fires
+# on one of the two bucket candidates.
+#
+# This locks the invariant that _evaluate_R4 keys on line-bucket + category,
+# never on message content. When R3 prepends "Depends on patch <pid>: " to
+# one comment's .message (current behaviour, pending C4 fix), the prefix
+# changes that comment's content-hash ref but MUST NOT prevent R4 from
+# seeing both comments in the same bucket.
+# ---------------------------------------------------------------------------
+
+
+def test_R4_bucketing_unaffected_when_R3_fires_on_one_candidate():
+    """R3 firing on one comment in a line-bucket pair must not prevent R4
+    from merging the pair.
+
+    Design:
+    - Two comments share the same line-bucket (lines 42 and 44 → both
+      hit bucket key (file, 4, "convention")) and the same category.
+    - comment_a has a phrase that triggers R3 ("waiting on another patch
+      to add <declared symbol>"); comment_b has no such phrase.
+    - R3 fires on comment_a only → prepends "Depends on patch p2: " to
+      its message, changing its content-hash ref.
+    - R4 evaluates the post-R3 working list; both comments are still in
+      the same (file, line//10, category-class) bucket → R4 must still
+      emit one R4 merge action.
+    - The absorbed comment is the lower-confidence one (comment_a,
+      conf=0.5) and the keeper is comment_b (conf=0.7).  Both are in
+      "convention" — no safety floor.
+
+    The test would fail if R4 used message content for bucketing, because
+    after R3 the two comments have different message prefixes.
+    """
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"baz,quux-codec": "p2"})
+
+    # R3 trigger: "waiting on another patch" + declared symbol → R3 fires
+    comment_a = _cmt(
+        message="waiting on another patch to add baz,quux-codec support",
+        line_number=42,
+        confidence=0.5,
+        category="convention",
+    )
+    # No R3 phrase, no declared symbol → R3 does NOT fire on this one
+    comment_b = _cmt(
+        message="driver_register call order looks wrong here",
+        line_number=44,
+        confidence=0.7,
+        category="convention",
+    )
+
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[comment_a, comment_b],
+        series_ctx=ctx,
+        mode="on",
+    )
+
+    r3_actions = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
+    r4_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+
+    # R3 must have fired on comment_a only.
+    assert len(r3_actions) == 1, f"Expected 1 R3 action, got {len(r3_actions)}"
+
+    # R4 must still merge the pair — structural bucketing is independent of
+    # message content, so the "Depends on patch p2: " prefix R3 added to
+    # comment_a's message must not affect R4's decision.
+    assert len(r4_actions) == 1, (
+        f"Expected 1 R4 merge action after R3 modified one candidate's message, "
+        f"got {len(r4_actions)}.  If this is 0, R4 is accidentally keying on "
+        f"message content or the line-bucket key changed."
+    )
+
+    # Keeper is comment_b (higher confidence 0.7 > 0.5).
+    assert len(result.comments) == 1
+    keeper = result.comments[0]
+    assert keeper.line_number == 44, "Keeper should be comment_b (higher conf)"
+    assert "driver_register" in keeper.message
+
+    # The absorbed comment (comment_a) should appear as a "Related remark".
+    # Because R3 already rewrote comment_a's message, the snippet that R4
+    # appends to the keeper reflects the post-R3 prefix.  This asserts that
+    # the ref chain is internally consistent within one reduce() call.
+    assert "Related remark:" in keeper.message, (
+        "R4 should have appended the absorbed comment's text to the keeper"
+    )
+    # The absorbed snippet contains the R3-rewritten prefix — confirms R4
+    # absorbed refs are computed from the post-R3 working list (consistent).
+    assert "Depends on patch p2:" in keeper.message or "baz,quux-codec" in keeper.message
+
+
+def test_R4_bucketing_identical_with_and_without_R3_on_non_trigger_pair():
+    """Baseline: when neither comment triggers R3, R4 behaviour is identical.
+
+    This pair does NOT have any R3 trigger phrase; neither matches a declared
+    symbol with an absence phrase.  R4 must merge them exactly as before —
+    confirming that the presence of a declared symbol in ctx does not
+    accidentally change R4's structural decision.
+    """
+    reducer = SeriesReducer()
+    # Declare a symbol, but neither comment mentions it with a trigger phrase.
+    ctx = _ctx(compatibles={"baz,quux-codec": "p2"})
+
+    comment_a = _cmt(message="nit: trailing whitespace", line_number=42, confidence=0.4)
+    comment_b = _cmt(message="nit: missing blank line", line_number=44, confidence=0.6)
+
+    result = reducer.reduce(
+        patch_id="p1",
+        comments=[comment_a, comment_b],
+        series_ctx=ctx,
+        mode="on",
+    )
+
+    r3_actions = [a for a in result.actions if a.kind == ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE]
+    r4_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+
+    assert len(r3_actions) == 0, "R3 must not fire — no trigger phrase present"
+    assert len(r4_actions) == 1, "R4 must merge the pair"
+    assert len(result.comments) == 1
+    keeper = result.comments[0]
+    assert keeper.line_number == 44  # higher confidence (0.6 > 0.4)
