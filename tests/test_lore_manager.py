@@ -213,3 +213,55 @@ def test_search_parses_cached_atom(tmp_path: Path) -> None:
     (tmp_path / key).write_bytes(atom.encode())
     ids = lm.search("my query")
     assert ids == ["msg-1@example.com", "msg-2@example.com"]
+
+
+def test_classify_nack_overrides_reviewed_by() -> None:
+    """Nacked-by takes precedence and maps to BLOCKER/nack."""
+    from kri.lore_manager.manager import LoreManagerImpl as _LM
+    lm = LoreManagerImpl.__new__(LoreManagerImpl)
+    body = "Nacked-by: Alice <a@b.c>\nReviewed-by: Bob <b@c.d>"
+    severity, category = lm._classify(body)
+    assert severity == Severity.BLOCKER
+    assert category == "nack"
+
+
+def test_classify_reviewed_by_maps_to_approval() -> None:
+    """Reviewed-by alone maps to INFO/approval."""
+    from kri.lore_manager.manager import LoreManagerImpl as _LM
+    lm = LoreManagerImpl.__new__(LoreManagerImpl)
+    body = "Looks good.\n\nReviewed-by: Alice <a@b.c>"
+    severity, category = lm._classify(body)
+    assert severity == Severity.INFO
+    assert category == "approval"
+
+
+def test_classify_plain_comment_is_review_discussion() -> None:
+    """Body with no trailer tags maps to INFO/review_discussion."""
+    lm = LoreManagerImpl.__new__(LoreManagerImpl)
+    body = "Please use tabs here, not spaces."
+    severity, category = lm._classify(body)
+    assert severity == Severity.INFO
+    assert category == "review_discussion"
+
+
+def test_strip_quotes_removes_quoted_lines() -> None:
+    """_strip_quotes must drop '> ...' prefixed lines and 'On ... wrote:' lines."""
+    from kri.lore_manager.manager import _strip_quotes
+    body = (
+        "On Mon, 1 Jan 2024, Alice wrote:\n"
+        "> +int y;\n"
+        "> +int z;\n"
+        "Please use a blank line here."
+    )
+    result = _strip_quotes(body)
+    assert "Please use a blank line here." in result
+    assert "> " not in result
+    assert "Alice wrote" not in result
+
+
+def test_strip_quotes_falls_back_to_full_body_if_nothing_left() -> None:
+    """If stripping quotes leaves nothing, the full body is returned."""
+    from kri.lore_manager.manager import _strip_quotes
+    body = "> quoted line only\n> another quoted"
+    result = _strip_quotes(body)
+    assert result == body.strip()
