@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kri.common.models import Patch, PatchSeries
+from kri.lore_manager.mbox import Message, SubjectInfo, Thread
 
 
 def test_parse_thread_into_series(patch_manager, v5_thread) -> None:
@@ -88,3 +89,70 @@ def test_parse_single_patch_series(patch_manager) -> None:
     series = patch_manager.parse(patch_manager._coerce_thread(SINGLE_FIXTURE.read_bytes()))
     assert len(series.patches) == 1
     assert series.patches[0].files_changed
+
+
+def _make_patch_msg(message_id: str, seq: int, total: int, with_diff: bool = True) -> Message:
+    diff = "diff --git a/x.c b/x.c\n@@ -1 +1 @@\n-a\n+b\n" if with_diff else ""
+    return Message(
+        message_id=message_id,
+        subject=f"[PATCH {seq}/{total}] subsys: do thing",
+        subject_info=SubjectInfo(
+            is_patch=True,
+            is_reply=False,
+            sequence=seq,
+            series_total=total,
+        ),
+        body=diff,
+        has_diff=with_diff,
+        from_email="author@example.com",
+    )
+
+
+def _make_reply_msg(message_id: str, in_reply_to: str) -> Message:
+    """Reviewer reply quoting the patch diff — must NOT be treated as a patch."""
+    diff_quote = "> diff --git a/x.c b/x.c\n> @@ -1 +1 @@\n"
+    return Message(
+        message_id=message_id,
+        subject="Re: [PATCH 1/1] subsys: do thing",
+        subject_info=SubjectInfo(
+            is_patch=True,   # [PATCH...] parsed after Re: stripped
+            is_reply=True,
+            sequence=1,
+            series_total=1,
+        ),
+        body=f"Looks good.\n\n{diff_quote}",
+        has_diff=True,       # quoted diff triggers the has_diff heuristic
+        from_email="reviewer@example.com",
+        in_reply_to=in_reply_to,
+    )
+
+
+def test_reviewer_reply_quoting_diff_excluded_from_patches() -> None:
+    """Regression: reviewer reply with a quoted diff must not appear in series.patches."""
+    from kri.patch_manager import PatchManagerImpl
+
+    patch_msg = _make_patch_msg("patch-1@x", seq=1, total=1)
+    reply_msg = _make_reply_msg("reply-1@x", in_reply_to="patch-1@x")
+    thread = Thread(
+        thread_id="patch-1@x",
+        messages=[patch_msg, reply_msg],
+    )
+    pm = PatchManagerImpl()
+    series = pm.parse(thread)
+
+    assert len(series.patches) == 1, (
+        "reviewer reply must be excluded; only the original patch should survive"
+    )
+    assert series.patches[0].patch_id == "patch-1@x"
+
+
+def test_is_patch_property_excludes_reply_even_with_diff() -> None:
+    """Unit test for Message.is_patch — reply with diff must return False."""
+    msg = _make_reply_msg("reply-2@x", in_reply_to="patch-2@x")
+    assert msg.is_patch is False, "is_patch must be False for reply messages"
+
+
+def test_is_patch_property_true_for_genuine_patch() -> None:
+    """Unit test for Message.is_patch — genuine patch returns True."""
+    msg = _make_patch_msg("patch-3@x", seq=1, total=1)
+    assert msg.is_patch is True

@@ -61,8 +61,9 @@ class Message(BaseModel):
 
     @property
     def is_patch(self) -> bool:
-        """A message is a patch iff it carries a PATCH subject prefix and a diff."""
-        return self.subject_info.is_patch and self.has_diff
+        """A message is a patch iff it carries a PATCH subject prefix, has a diff,
+        and is not a reply (reviewer replies quoting a diff are excluded)."""
+        return self.subject_info.is_patch and self.has_diff and not self.subject_info.is_reply
 
 
 class Thread(BaseModel):
