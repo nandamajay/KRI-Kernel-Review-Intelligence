@@ -1,0 +1,61 @@
+# KRI Constitutional Rules — machine-readable form of the spec invariants.
+#
+# Each entry has:
+#   section  : canonical spec section reference (e.g. "9", "28.1")
+#   title    : short human label
+#   category : domain-isolation | evidence | determinism | safety | learning
+#   summary  : the invariant in one sentence
+#   enforced_by : list of Python qualified names that implement / check the rule
+#
+# Adding a rule here does NOT auto-enforce it; the list is the source of truth
+# that enforcement code must reference.
+
+schema_version: "1"
+
+rules:
+  - section: "9"
+    title: "Domain Isolation"
+    category: "domain-isolation"
+    summary: >
+      The Generic Runtime must contain no domain identifiers. All ASoC/ALSA/
+      subsystem-specific logic lives in DKP packages under kri/packages/.
+    enforced_by:
+      - "tests.test_scaffolding.test_domain_isolation_generic_runtime_has_no_asoc_identifiers"
+
+  - section: "28"
+    title: "Constitutional Evidence Gate"
+    category: "evidence"
+    summary: >
+      A Decision is only publishable when its EvidenceGraph contains at least
+      one verified evidence node. Decisions without verified evidence are
+      silently dropped before report generation.
+    enforced_by:
+      - "kri.common.models.Decision.is_publishable"
+      - "kri.common.models.EvidenceGraph.has_verified_evidence"
+
+  - section: "31"
+    title: "Determinism"
+    category: "determinism"
+    summary: >
+      Given identical inputs and the same Knowledge State, the system must
+      produce byte-identical output. Stochastic elements (random, uuid, time)
+      are forbidden outside kri/learning/.
+    enforced_by:
+      - "kri.knowledge.graph.KnowledgeGraph.canonical_json"
+      - "kri.knowledge.graph.KnowledgeGraph.content_hash"
+
+  - section: "37"
+    title: "Snapshot Identity"
+    category: "determinism"
+    summary: >
+      Every ReviewResult carries an immutable snapshot id composed of
+      {series_id, dkp_versions, learning_iteration} for replay traceability.
+    enforced_by: []
+
+  - section: "40"
+    title: "Stochastic Confinement"
+    category: "learning"
+    summary: >
+      random, time.*, datetime.now, uuid.uuid1/uuid4 are forbidden outside
+      kri/learning/. hashlib is permitted everywhere and is Sec-40-safe.
+    enforced_by: []
