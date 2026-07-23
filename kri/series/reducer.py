@@ -99,6 +99,42 @@ _R3_TRIGGER_PHRASES: tuple[str, ...] = (
     "not yet applied series",
 )
 
+# Diagnostic-only vocabularies (do NOT gate any rule body). See
+# :class:`ReducerDiagnostics` for the questions these counters answer.
+# _R1_PRECONDITION_HINTS is intentionally BROADER than
+# _R1_TRIGGER_PHRASES — it approximates the wide-symbol relaxation
+# proposed by the WP-S1B adversarial report's Counter-finding A and
+# lets shadow runs measure how much recall the current gate is
+# leaving on the table.
+_R1_PRECONDITION_HINTS: tuple[str, ...] = (
+    "binding",
+    "compatible",
+    "yaml",
+    "dt-binding",
+    "dt_binding",
+    "documented",
+    "documentation",
+    "schema",
+)
+
+# R3 precondition matches the "absence" shape a series-aware LLM
+# would emit when it thinks a symbol is undeclared. The prose the
+# 6-batch scan surfaced ("... but the symbol X does not appear to be
+# defined in this patch or any other patch in the series") is
+# structurally what R3 should rewrite when the symbol IS in fact
+# declared elsewhere in the series.
+_R3_PRECONDITION_HINTS: tuple[str, ...] = (
+    "not defined",
+    "not declared",
+    "referenced but",
+    "referenced without",
+    "undefined",
+    "missing definition",
+    "does not appear to be defined",
+    "no such symbol",
+    "unresolved reference",
+)
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -114,17 +150,69 @@ class _Rule:
 
 
 @dataclass(frozen=True)
+class ReducerDiagnostics:
+    """Per-patch precondition counters emitted alongside every non-``off`` run.
+
+    Every field counts occurrences *before* any rule body decides what to
+    do — a rule that fires zero actions can still show a non-zero
+    precondition count, which is exactly what shadow validation needs to
+    tell "rule silent because input is empty" apart from "rule silent
+    because gate is over-tight".
+
+    The counters answer the questions the 6-batch shadow run could not:
+
+    - ``r1_precondition_hits``: findings citing a declared symbol AND a
+      binding/documentation word — the wide-symbol relaxation R1
+      *would* trigger on if its narrow phrase list were replaced by
+      symbol-only matching. Non-zero here + zero R1 actions == phrase
+      list is the bottleneck.
+    - ``r3_precondition_hits``: findings citing a declared symbol AND an
+      absence-shaped word (not defined / referenced but / undefined /
+      missing definition). Non-zero here + zero R3 actions == R3's
+      trigger vocabulary is aimed at maintainer replies, not the
+      LLM's own prose.
+    - ``r4_bucket_candidates_pre_floor``: buckets of size ≥ 2 with the
+      safety floor NOT applied. Non-zero here + zero
+      ``_post_floor`` == the safety floor is the bottleneck (F3 stands).
+      Zero here == no bucket volume; R4 has no work to do regardless
+      of floor policy.
+    - ``r4_bucket_candidates_post_floor``: same buckets *after* the floor
+      filter — this is the exact population R4's evaluator sees.
+
+    Deterministic (Sec. 40): counters are computed from input state
+    only, no time/rng/address involvement.
+    """
+
+    r1_precondition_hits: int = 0
+    r3_precondition_hits: int = 0
+    r4_bucket_candidates_pre_floor: int = 0
+    r4_bucket_candidates_post_floor: int = 0
+
+    def to_metadata(self) -> dict[str, int]:
+        return {
+            "r1_precondition_hits": self.r1_precondition_hits,
+            "r3_precondition_hits": self.r3_precondition_hits,
+            "r4_bucket_candidates_pre_floor": self.r4_bucket_candidates_pre_floor,
+            "r4_bucket_candidates_post_floor": self.r4_bucket_candidates_post_floor,
+        }
+
+
+@dataclass(frozen=True)
 class ReducerResult:
     """Return value from :meth:`SeriesReducer.reduce`.
 
     ``comments`` is the possibly-mutated per-patch comment list. For
     ``mode="off"`` and ``mode="shadow"``, it is exactly the same list as
     was passed in. ``actions`` is the audit trail — empty for ``mode="off"``
-    since no evaluator runs.
+    since no evaluator runs. ``diagnostics`` records precondition counts
+    the rule bodies did NOT act on (see :class:`ReducerDiagnostics`) — it
+    is populated on every non-``off`` run and is a plain default when
+    ``mode="off"``.
     """
 
     comments: list[InlineComment]
     actions: list[ReducerAction] = field(default_factory=list)
+    diagnostics: ReducerDiagnostics = field(default_factory=lambda: ReducerDiagnostics())
 
 
 class SeriesReducer:
@@ -183,6 +271,13 @@ class SeriesReducer:
         actions: list[ReducerAction] = []
         working = comments  # mutated only in mode == "on"
 
+        # Diagnostics — computed from the INPUT comment list (pre-rule).
+        # These counters answer "does the input contain the precondition
+        # class this rule was built for?" independently of whether any
+        # rule body fires. See :class:`ReducerDiagnostics` for the
+        # questions each counter answers.
+        diagnostics = self._compute_diagnostics(comments, series_ctx)
+
         for rule in self._rules:
             if rule.flag is not None and not flags.get(rule.flag, False):
                 continue
@@ -193,7 +288,7 @@ class SeriesReducer:
             if mode == "on" and rule_actions:
                 working = apply_fn(working, rule_actions)
 
-        return ReducerResult(comments=working, actions=actions)
+        return ReducerResult(comments=working, actions=actions, diagnostics=diagnostics)
 
     # ------------------------------------------------------------------
     # Shared helpers.
@@ -224,6 +319,62 @@ class SeriesReducer:
         if a.category == b.category:
             return True
         return a.category in _SOFT_CATEGORIES and b.category in _SOFT_CATEGORIES
+
+    def _compute_diagnostics(
+        self,
+        comments: list[InlineComment],
+        series_ctx: SeriesReviewContext,
+    ) -> ReducerDiagnostics:
+        """Count precondition-hits per rule, independent of what any rule
+        body decides.
+
+        Runs once per reduce() call before any rule executes; input is
+        the raw comment list the reducer received. Counters are cheap
+        (single pass + per-symbol substring check) and Sec-40-safe.
+        """
+        registry = series_ctx.declared_symbols
+        declared = list(registry.compatibles.keys()) + list(registry.dt_properties.keys())
+        declared_lower = [s.lower() for s in declared if s]
+
+        r1_hits = 0
+        r3_hits = 0
+        for comment in comments:
+            haystack_parts = [comment.message or ""]
+            if comment.upstream_comment:
+                haystack_parts.append(comment.upstream_comment)
+            haystack = " ".join(haystack_parts).lower()
+
+            cites_symbol = any(sym in haystack for sym in declared_lower)
+            if not cites_symbol:
+                continue
+            if any(hint in haystack for hint in _R1_PRECONDITION_HINTS):
+                r1_hits += 1
+            if any(hint in haystack for hint in _R3_PRECONDITION_HINTS):
+                r3_hits += 1
+
+        # R4 bucket candidates — pre-floor and post-floor. Both use the
+        # same (file, line // 10, category-class) key as _evaluate_R4 to
+        # guarantee _post_floor matches exactly what R4 will see.
+        pre_buckets: dict[tuple[str, int, str], int] = {}
+        post_buckets: dict[tuple[str, int, str], int] = {}
+        for comment in comments:
+            cat_class = (
+                "_soft" if comment.category in _SOFT_CATEGORIES else comment.category
+            )
+            key = (comment.file_path, comment.line_number // 10, cat_class)
+            pre_buckets[key] = pre_buckets.get(key, 0) + 1
+            if not self._is_safety_floored(comment):
+                post_buckets[key] = post_buckets.get(key, 0) + 1
+
+        pre_ge2 = sum(1 for count in pre_buckets.values() if count >= 2)
+        post_ge2 = sum(1 for count in post_buckets.values() if count >= 2)
+
+        return ReducerDiagnostics(
+            r1_precondition_hits=r1_hits,
+            r3_precondition_hits=r3_hits,
+            r4_bucket_candidates_pre_floor=pre_ge2,
+            r4_bucket_candidates_post_floor=post_ge2,
+        )
 
     # ------------------------------------------------------------------
     # Rule stubs. Every ``_evaluate_R_k`` returns [] and every ``_apply_R_k``

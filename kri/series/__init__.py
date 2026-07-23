@@ -19,7 +19,7 @@ from kri.series.models import (
     SymbolRegistry,
 )
 from kri.series.prompt import format_series_context
-from kri.series.reducer import ReducerResult, SeriesReducer
+from kri.series.reducer import ReducerDiagnostics, ReducerResult, SeriesReducer
 
 __all__ = [
     "SeriesReviewContextBuilder",
@@ -29,6 +29,7 @@ __all__ = [
     "SeriesProvenance",
     "ReducerAction",
     "ReducerActionKind",
+    "ReducerDiagnostics",
     "ReducerResult",
     "SeriesReducer",
     "format_series_context",

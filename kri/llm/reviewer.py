@@ -165,6 +165,13 @@ class IntelligentReviewEngine:
                     logger.warning("Agent %s failed: %s", agent_name, e)
 
         # Merge and deduplicate comments
+        # WP-S1B diagnostics: capture the pre-merge cross-agent overlap
+        # BEFORE _merge_comments collapses (file, line, category)
+        # duplicates. This is the only place the raw 3-agent output is
+        # visible; once _merge_comments runs, overlap is invisible to
+        # any downstream rule (R4 in particular) and the "did the
+        # reducer have work?" question becomes unanswerable.
+        agent_overlap = self._measure_agent_overlap(agent_outputs)
         all_comments = self._merge_comments(agent_outputs)
 
         # Back-fill hunk_context deterministically — do not rely on LLM to populate it.
@@ -207,6 +214,23 @@ class IntelligentReviewEngine:
             pr_metadata["series_reducer_actions"] = [
                 a.to_metadata() for a in reducer_result.actions
             ]
+        # WP-S1B diagnostics — always emitted when the reducer ran
+        # (any non-``off`` mode). ``agent_overlap`` was captured above
+        # from the raw agent outputs before _merge_comments collapsed
+        # them; ``reducer_result.diagnostics`` was computed by the
+        # reducer over the merged list. Together they answer "was
+        # there any input for the rules?" and "did any rule's
+        # precondition class appear in the input?" — the two questions
+        # the 6-batch shadow run left unanswered.
+        #
+        # The gate is on mode only, NOT on series_ctx: a shadow run
+        # over a single-patch series still produces (all-zero) counters
+        # so scraper tooling never has to guess "did the reducer run at
+        # all vs find nothing".
+        if self._series_reducer_mode != "off":
+            reducer_diag: dict[str, Any] = dict(reducer_result.diagnostics.to_metadata())
+            reducer_diag.update(agent_overlap)
+            pr_metadata["reducer_diagnostics"] = reducer_diag
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
@@ -245,6 +269,62 @@ class IntelligentReviewEngine:
         for o in outputs:
             comments.extend(o.general_comments)
         return comments
+
+    @staticmethod
+    def _measure_agent_overlap(outputs: list[AgentReviewOutput]) -> dict[str, Any]:
+        """Measure how much the parallel review-agent stream overlaps on
+        ``(file, line // 10)``.
+
+        Emitted before ``_merge_comments`` collapses (file, line,
+        category) duplicates — this is the ONLY point in the pipeline
+        where the raw per-agent geometry is visible. Once merged, we
+        can no longer tell whether R4 has "nothing to bucket because
+        agents diverged" vs "nothing to bucket because floor swallowed
+        everything".
+
+        Note: KRI's engine spawns three threads per patch, but only two
+        (``code_quality`` and ``subsystem``) produce inline comments —
+        ``summarizer`` produces a :class:`PatchSummary`, not a review
+        output. The counters below therefore reflect *review-agent*
+        overlap, not thread overlap.
+
+        Returned counters:
+          - ``per_agent_finding_counts``: comma-joined "N,M" of the
+            raw agent output sizes (order = ``outputs`` order, which
+            comes from ``futures.as_completed`` — non-deterministic).
+          - ``total_line_buckets``: distinct (file, line // 10) buckets
+            observed across all agents. Needed as a denominator by any
+            downstream metric.
+          - ``cross_agent_line_bucket_count``: buckets that received a
+            finding from ≥ 2 distinct agents.
+          - ``cross_agent_line_bucket_pct``: multi-agent-bucket-count
+            as a percent of ``total_line_buckets`` (0..100 rounded).
+            0 means every bucket saw at most one agent — R4 has no
+            volume by construction.
+
+        Confidence-cutoff mirrors ``_merge_comments`` (< 0.4 skipped)
+        so counts reflect what would actually reach the reducer.
+        """
+        per_agent_counts: list[int] = []
+        buckets: dict[tuple[str, int], set[int]] = {}
+        for agent_idx, output in enumerate(outputs):
+            per_agent_counts.append(len(output.inline_comments))
+            for comment in output.inline_comments:
+                if comment.confidence < 0.4:
+                    continue
+                key = (comment.file_path, comment.line_number // 10)
+                buckets.setdefault(key, set()).add(agent_idx)
+
+        total_buckets = len(buckets)
+        multi_agent = sum(1 for agents in buckets.values() if len(agents) >= 2)
+        pct = round((multi_agent / total_buckets) * 100.0, 1) if total_buckets else 0.0
+
+        return {
+            "per_agent_finding_counts": ",".join(str(n) for n in per_agent_counts),
+            "total_line_buckets": total_buckets,
+            "cross_agent_line_bucket_count": multi_agent,
+            "cross_agent_line_bucket_pct": pct,
+        }
 
     def _generate_overall_assessment(self, patch_reviews: list[PatchReview]) -> str:
         """Use LLM to synthesize a brief overall assessment."""
