@@ -651,3 +651,44 @@ def test_report_metadata_contains_series_context_for_multi_patch():
         "thundercomm,qcs6490-rubikpi3-sndcard"
         in report.metadata["series_context"]["declared_compatibles"]
     )
+
+
+def test_extract_containing_function_line_beyond_diff_returns_none() -> None:
+    """target_line beyond all hunks must return None (not the last seen function)."""
+    diff = (
+        "diff --git a/f.c b/f.c\n"
+        "@@ -1,3 +1,4 @@\n"
+        " int helper(void) {\n"
+        "+\treturn 1;\n"
+        " }\n"
+    )
+    # Hunk covers lines 1-4; line 99 is beyond the hunk.
+    result = extract_containing_function(diff, 99)
+    assert result is None
+
+
+def test_extract_containing_function_uses_hunk_header_hint() -> None:
+    """When @@ ... @@ carries a function hint and no def lines follow,
+    the hint function name should be returned for a line inside the hunk."""
+    diff = (
+        "diff --git a/f.c b/f.c\n"
+        "@@ -10,3 +10,4 @@ static int do_work(struct device *dev)\n"
+        " \tint ret;\n"
+        "+\tret = 0;\n"
+        " \treturn ret;\n"
+    )
+    result = extract_containing_function(diff, 11)
+    assert result == "do_work"
+
+
+def test_extract_referenced_symbols_empty_diff_returns_empty() -> None:
+    """extract_referenced_symbols on an empty diff must return an empty set."""
+    result = extract_referenced_symbols("", {"foo", "bar"})
+    assert result == set()
+
+
+def test_extract_referenced_symbols_empty_symbol_set_returns_empty() -> None:
+    """extract_referenced_symbols with empty symbol set must return empty set."""
+    diff = "diff --git a/f.c b/f.c\n@@\n+\tfoo();\n"
+    result = extract_referenced_symbols(diff, set())
+    assert result == set()
