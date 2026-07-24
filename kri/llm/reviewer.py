@@ -43,9 +43,9 @@ class IntelligentReviewEngine:
         series_context_builder: SeriesReviewContextBuilder | None = None,
         series_reducer_mode: Literal["off", "shadow", "on"] = "off",
         series_reducer: SeriesReducer | None = None,
-        series_r5_enabled: bool = False,
-        series_r6_enabled: bool = False,
-        series_r7_enabled: bool = False,
+        series_r5_enabled: bool = True,
+        series_r6_enabled: bool = True,
+        series_r7_enabled: bool = True,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
