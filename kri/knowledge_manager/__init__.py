@@ -12,10 +12,13 @@ from .manager import (
     DkpLoadError,
     KnowledgeManagerImpl,
 )
+from .persistence import load_snapshot, save_snapshot
 
 __all__ = [
     "KnowledgeManagerImpl",
     "DkpLoadError",
     "DKP_ENTRY_POINT_GROUP",
     "RUNTIME_VERSION",
+    "save_snapshot",
+    "load_snapshot",
 ]

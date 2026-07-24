@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -75,6 +76,13 @@ def _default_kernel_path() -> Path | None:
         return Path(env)
     candidate = Path(__file__).resolve().parents[3] / "data" / "kernel" / "linux"
     return candidate if candidate.exists() else None
+
+
+def _default_ekg_snapshot_path() -> Path:
+    env = os.environ.get("KRI_EKG_SNAPSHOT_PATH")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[3] / "data" / "ekg_snapshot.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +160,7 @@ def create_app(
     patch_manager: PatchManagerImpl | None = None,
 ) -> FastAPI:
     """Application factory. Managers may be injected for testing/offline use."""
-    app = FastAPI(title="KRI", version="0.1.0",
-                  description="Kernel Review Intelligence — Sprint-1 ingest API")
+    from kri.knowledge_manager import KnowledgeManagerImpl, load_snapshot, save_snapshot
 
     lore = lore_manager or LoreManagerImpl(LoreConfig(
         cache_dir=_default_cache_dir(),
@@ -164,15 +171,35 @@ def create_app(
 
     store: OrderedDict[str, PatchSeries] = OrderedDict()
     _STORE_MAX = 100
-    app.state.store = store
-    app.state.lore = lore
-    app.state.patches = patches
-
-    from kri.knowledge_manager.manager import KnowledgeManagerImpl
 
     # Shared across requests so the learning-iteration counter (/api/learn)
     # actually advances instead of resetting to 1 on every call.
     learning_km = KnowledgeManagerImpl()
+
+    @asynccontextmanager
+    async def _lifespan(application: FastAPI):  # noqa: ARG001
+        # WP4-H: load persisted EKG snapshot on startup (degrade gracefully if absent).
+        snapshot_path = _default_ekg_snapshot_path()
+        if load_snapshot(learning_km, snapshot_path):
+            logger.info("EKG snapshot loaded from %s", snapshot_path)
+        else:
+            logger.debug("No EKG snapshot at %s; starting with empty graph", snapshot_path)
+        yield
+        # WP4-H: persist EKG snapshot on shutdown.
+        try:
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            save_snapshot(learning_km, snapshot_path)
+            logger.info("EKG snapshot saved to %s", snapshot_path)
+        except Exception as _snap_exc:  # noqa: BLE001
+            logger.warning("EKG snapshot save failed: %s", _snap_exc)
+
+    app = FastAPI(title="KRI", version="0.1.0",
+                  description="Kernel Review Intelligence — Sprint-1 ingest API",
+                  lifespan=_lifespan)
+
+    app.state.store = store
+    app.state.lore = lore
+    app.state.patches = patches
     app.state.knowledge_manager = learning_km
 
     def _store_series(series: PatchSeries) -> None:
