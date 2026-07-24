@@ -795,6 +795,18 @@ function renderIntelligent(r){
           html+=`<details style="margin:0.5rem 0"><summary><b>Possible Fix Direction</b></summary>
             <pre style="background:#2c3e50;color:#ecf0f1;padding:0.8rem;border-radius:4px;font-size:0.82rem;margin:0.3rem 0">${esc(c.suggestion)}</pre></details>`;
         }
+        if(c.evidence_status&&c.evidence_status!=='unknown'){
+          const evColors={'rule_backed':'#1565c0','blame_backed':'#2e7d32','supported':'#558b2f','safety_floored':'#e65100','evidence_missing':'#b71c1c'};
+          const evBg={'rule_backed':'#e3f2fd','blame_backed':'#e8f5e9','supported':'#f1f8e9','safety_floored':'#fff3e0','evidence_missing':'#ffebee'};
+          const col=evColors[c.evidence_status]||'#546e7a';
+          const bg=evBg[c.evidence_status]||'#eceff1';
+          html+=`<p style="margin:0.4rem 0;font-size:0.82rem"><b>Evidence:</b> <span style="background:${bg};color:${col};border:1px solid ${col};border-radius:3px;padding:0.1rem 0.4rem;font-weight:700;font-size:0.78rem">${esc(c.evidence_status)}</span></p>`;
+        }
+        if(c.cfm_confidence&&c.cfm_confidence.score!=null){
+          const cfmPct=(c.cfm_confidence.score*100).toFixed(0);
+          const cfmLvl=esc(c.cfm_confidence.level||'');
+          html+=`<p style="margin:0.4rem 0;font-size:0.82rem"><b>CFM score:</b> ${cfmPct}% <span style="color:#7f8c8d">(${cfmLvl}, shadow mode)</span></p>`;
+        }
         html+=`</div>`;
       }
     }else{
