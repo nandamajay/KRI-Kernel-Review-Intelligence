@@ -31,6 +31,39 @@ from kri.series import (
 logger = logging.getLogger(__name__)
 
 
+def _apply_status_to_dict(r: Any) -> dict:
+    """Serialise an ``ApplicabilityResult`` to a plain dict for metadata storage."""
+    return {
+        "ok": r.ok,
+        "degraded": r.degraded,
+        "degraded_reason": r.degraded_reason,
+        "baseline_ref": r.baseline_ref,
+        "baseline_commit": r.baseline_commit,
+        "failed": list(r.failed),
+        "conflicts": list(r.conflicts),
+        "duration_seconds": r.duration_seconds,
+    }
+
+
+def _summarize_apply_status(patch_reviews: list) -> dict:
+    """Aggregate per-patch apply_status into a report-level summary."""
+    total = 0
+    clean = 0
+    conflict = 0
+    degraded = 0
+    for pr in patch_reviews:
+        if pr.metadata and "apply_status" in pr.metadata:
+            total += 1
+            s = pr.metadata["apply_status"]
+            if s.get("degraded"):
+                degraded += 1
+            elif s.get("ok"):
+                clean += 1
+            else:
+                conflict += 1
+    return {"total": total, "clean": clean, "conflict": conflict, "degraded": degraded}
+
+
 class IntelligentReviewEngine:
     """Orchestrates multiple LLM review agents to produce a comprehensive review."""
 
@@ -47,10 +80,14 @@ class IntelligentReviewEngine:
         series_r5_enabled: bool = True,
         series_r6_enabled: bool = True,
         series_r7_enabled: bool = True,
+        gate: Any | None = None,
+        baseline_ref: str = "HEAD",
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
         self._static_analysis = static_analysis
+        self._gate = gate
+        self._baseline_ref = baseline_ref
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -109,6 +146,8 @@ class IntelligentReviewEngine:
         }
         if series_ctx is not None and series_ctx.is_multi_patch():
             metadata["series_context"] = series_ctx.to_metadata()
+        if self._gate is not None:
+            metadata["apply_status_summary"] = _summarize_apply_status(patch_reviews)
 
         return IntelligentReport(
             series_id=series.series_id,
@@ -137,6 +176,19 @@ class IntelligentReviewEngine:
                 checkpatch_findings = self._static_analysis.run_checkpatch(patch)
             except Exception as e:
                 logger.warning("checkpatch failed: %s", e)
+
+        # Strategy C: gate result is stored as metadata only, never injected into prompts.
+        apply_status: dict | None = None
+        if self._gate is not None:
+            try:
+                single = PatchSeries(
+                    series_id=f"{series.series_id}:{patch.patch_id}",
+                    patches=[patch],
+                )
+                gate_result = self._gate.check(single, baseline_ref=self._baseline_ref)
+                apply_status = _apply_status_to_dict(gate_result)
+            except Exception as _gate_exc:
+                logger.warning("applicability gate failed: %s", _gate_exc)
 
         summary: PatchSummary | None = None
         agent_outputs: list[AgentReviewOutput] = []
@@ -238,6 +290,8 @@ class IntelligentReviewEngine:
             reducer_diag: dict[str, Any] = dict(reducer_result.diagnostics.to_metadata())
             reducer_diag.update(agent_overlap)
             pr_metadata["reducer_diagnostics"] = reducer_diag
+        if apply_status is not None:
+            pr_metadata["apply_status"] = apply_status
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,

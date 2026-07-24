@@ -232,7 +232,7 @@ class RepositoryManagerImpl:
         tmp: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                "w", suffix=".diff", delete=False, dir=self._cfg.repo_path
+                "w", suffix=".diff", delete=False, dir=None
             ) as fh:
                 fh.write(diff_text)
                 tmp = fh.name

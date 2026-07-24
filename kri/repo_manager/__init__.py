@@ -6,6 +6,7 @@ clone, with graceful handling of shallow clones.
 
 from __future__ import annotations
 
+from .gate import ApplicabilityGate, ApplicabilityResult
 from .manager import (
     ApplyResult,
     RepoConfig,
@@ -15,9 +16,11 @@ from .manager import (
 )
 
 __all__ = [
-    "RepositoryManagerImpl",
-    "RepoConfig",
-    "TreeStateInfo",
+    "ApplicabilityGate",
+    "ApplicabilityResult",
     "ApplyResult",
+    "RepoConfig",
+    "RepositoryManagerImpl",
+    "TreeStateInfo",
     "clone_or_open",
 ]

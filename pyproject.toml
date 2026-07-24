@@ -55,6 +55,9 @@ pythonpath = ["."]
 # results silently accumulate. See WP-9.2a-polish-v2 closeout notes for the
 # fabrication-avoidance rationale.
 xfail_strict = true
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 filterwarnings = [
     # starlette's TestClient nags about an httpx2 package that does not exist yet.
     "ignore:Using `httpx` with `starlette.testclient`",

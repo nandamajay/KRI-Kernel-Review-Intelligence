@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from kri.common.models import PatchSeries
 from kri.lore_manager import LoreConfig, LoreManagerImpl
 from kri.patch_manager import PatchManagerImpl
-from kri.repo_manager import RepoConfig, RepositoryManagerImpl
+from kri.repo_manager import ApplicabilityGate, RepoConfig, RepositoryManagerImpl
 
 logger = logging.getLogger(__name__)
 
@@ -326,11 +326,17 @@ def create_app(
             llm_config = LLMConfig()
             client = LLMClient(llm_config)
             static_analysis = None
+            gate = None
             kernel_path = _default_kernel_path()
             if kernel_path:
                 static_analysis = StaticAnalysisManagerImpl(
                     StaticAnalysisConfig(repo_path=kernel_path)
                 )
+                try:
+                    rm = RepositoryManagerImpl(RepoConfig(kernel_path))
+                    gate = ApplicabilityGate(rm)
+                except ValueError:
+                    pass  # kernel_path not a valid repo; gate disabled
             engine = IntelligentReviewEngine(
                 client=client,
                 dkp=dkp,
@@ -339,32 +345,11 @@ def create_app(
                 series_r5_enabled=reducer_r5,
                 series_r6_enabled=reducer_r6,
                 series_r7_enabled=reducer_r7,
+                gate=gate,
+                baseline_ref=os.environ.get("KRI_BASELINE_REF", "HEAD"),
             )
-
-            # Blueprint Sec. 21.1: attempt apply at series level BEFORE entering
-            # ThreadPoolExecutor — apply_patch() is not thread-safe on the same Repo.
-            apply_status: dict[str, Any] = {"status": "skipped"}
-            if kernel_path:
-                try:
-                    rm = RepositoryManagerImpl(RepoConfig(kernel_path))
-                    result = rm.apply_patch(series)
-                    apply_status = {
-                        "status": "ok" if result.ok else "failed",
-                        "applied": result.applied,
-                        "failed": result.failed,
-                        "conflicts": result.conflicts,
-                        "message": result.message,
-                    }
-                except ValueError as exc:
-                    apply_status = {"status": "error", "message": str(exc)}
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("repo_manager apply_patch failed: %s", exc)
-                    apply_status = {"status": "error", "message": str(exc)}
-
             report = engine.review(series)
-            result_dict = report.model_dump()
-            result_dict.setdefault("metadata", {})["apply_status"] = apply_status
-            return result_dict
+            return report.model_dump()
         except LLMOfflineError as e:
             raise HTTPException(
                 status_code=503,

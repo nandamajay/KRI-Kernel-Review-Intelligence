@@ -51,7 +51,7 @@ _ALLOWED_CALLS: dict[str, set[int]] = {
     # Elapsed-wall-clock telemetry only: feeds IntelligentReport.metadata
     # ["processing_time_seconds"], which is never read by any
     # Decision/Confidence/Report computation or asserted on by any test.
-    "llm/reviewer.py": {80, 96},
+    "llm/reviewer.py": {117, 133},
     # time.monotonic(): pure live-network rate-limiting delay, has zero
     # effect on parsed thread/patch content.
     # datetime.now(): retrieved_at is set ONLY on a genuine cache-miss live
@@ -61,6 +61,10 @@ _ALLOWED_CALLS: dict[str, set[int]] = {
     # the comment "kept null: retrieval time must not affect output"
     # (see tests/test_lore_manager.py::test_... asserting retrieved_at is None).
     "lore_manager/manager.py": {115, 118, 150},
+    # time.monotonic(): pure elapsed-wall-clock telemetry for
+    # ApplicabilityResult.duration_seconds.  Never read by any
+    # Decision/Confidence/Report computation or asserted on by any test.
+    "repo_manager/gate.py": {137, 157, 170, 184, 193, 240},
 }
 
 
