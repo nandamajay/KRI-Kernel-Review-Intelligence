@@ -722,6 +722,9 @@ function renderIntelligent(r){
       applySegment=` | <b>Apply:</b> ${icon} ${s.clean??0} clean / ${s.conflict??0} conflict`;
     }
     html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s | <b>Checkpatch findings:</b> ${cpCount}${applySegment}</p>`;
+    if(r.metadata.knowledge_state_id){
+      html+=`<p style="font-size:0.8rem;color:#7f8c8d"><b>Knowledge state:</b> <code>${esc(r.metadata.knowledge_state_id.slice(0,16))}</code></p>`;
+    }
   }
   if(r.overall_assessment){
     html+=`<div style="background:#f0f7ff;border:1px solid #3498db;border-radius:4px;padding:0.8rem;margin:0.8rem 0">
@@ -815,6 +818,14 @@ function renderIntelligent(r){
     if(pr.lore_reply){
       html+=`<details style="margin:1rem 0"><summary><b>Lore Email Reply (click to expand)</b></summary>
         <pre style="white-space:pre-wrap;background:#f9f9f9;color:#1a1a1a;border:1px solid #ddd;padding:1rem">${esc(pr.lore_reply)}</pre></details>`;
+    }
+    if(pr.governance_warnings&&pr.governance_warnings.length){
+      html+=`<details open style="margin:0.6rem 0"><summary style="color:#b71c1c;font-weight:700">⚠️ Governance Violations (${pr.governance_warnings.length})</summary>
+        <div style="padding:0.4rem">`;
+      for(const w of pr.governance_warnings){
+        html+=`<div style="border-left:3px solid #b71c1c;padding:0.3rem 0.6rem;margin:0.3rem 0;font-size:0.85rem;color:#b71c1c">${esc(w)}</div>`;
+      }
+      html+=`</div></details>`;
     }
     const reducerActions=(pr.metadata&&pr.metadata.series_reducer_actions)||[];
     const couplingNotes=reducerActions.filter(a=>a.kind==='coupling_note');

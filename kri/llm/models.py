@@ -150,3 +150,5 @@ class PatchReview(BaseModel):
     general_comments: list[str] = Field(default_factory=list)
     lore_reply: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # WP4-V: governance violations surfaced in API response (Phase-4V fix)
+    governance_warnings: list[str] = Field(default_factory=list)

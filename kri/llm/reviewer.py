@@ -421,6 +421,9 @@ class IntelligentReviewEngine:
         # WP4-B: evidence gate — convert comments to Decisions, gather evidence,
         # apply evidence_status, suppress evidence_missing (non-safety-floor) comments.
         # Guard: only active when evidence_engine is wired in; None = mode-off safe.
+        # WP4-V: pre-initialize so PatchReview() can always receive it, even when
+        # evidence_engine is None (avoids NameError on the mode-off path).
+        gov_violations: list[str] = []
         if self._evidence_engine is not None:
             series_ctx_common: SeriesContext | None = None
             try:
@@ -496,6 +499,7 @@ class IntelligentReviewEngine:
             general_comments=self._collect_general(agent_outputs),
             lore_reply=lore_reply,
             metadata=pr_metadata,
+            governance_warnings=gov_violations,
         )
 
     def _apply_evidence_gate(
