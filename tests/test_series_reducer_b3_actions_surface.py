@@ -105,7 +105,7 @@ class _ActionEmittingReducer:
     def __init__(self, actions_per_patch: list[ReducerAction]) -> None:
         self._actions = actions_per_patch
 
-    def reduce(self, patch_id, comments, series_ctx, mode, flags):
+    def reduce(self, patch_id, comments, series_ctx, mode, flags, diff=""):
         return ReducerResult(comments=comments, actions=list(self._actions))
 
 

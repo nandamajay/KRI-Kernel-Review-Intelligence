@@ -290,7 +290,7 @@ def test_TB1_OFF_MODE_default_is_byte_identical_to_no_reducer_path():
     )
     # But actually — mode='off' still calls reducer.reduce() and expects the
     # skeleton to short-circuit. So configure the mock to return the input.
-    def _identity(patch_id, comments, series_ctx, mode, flags):
+    def _identity(patch_id, comments, series_ctx, mode, flags, diff=""):
         assert mode == "off"
         return ReducerResult(comments=comments, actions=[])
     strict.reduce.side_effect = _identity
@@ -363,7 +363,7 @@ class _SpyReducer:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def reduce(self, patch_id, comments, series_ctx, mode, flags):
+    def reduce(self, patch_id, comments, series_ctx, mode, flags, diff=""):
         # Snapshot per-comment fields so later engine mutations (there are
         # none in B1) can't retroactively change what we saw.
         self.calls.append(

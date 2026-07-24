@@ -193,6 +193,7 @@ class IntelligentReviewEngine:
             series_ctx=series_ctx,
             mode=self._series_reducer_mode,
             flags=self._series_reducer_flags,
+            diff=patch.diff or "",
         )
         all_comments = reducer_result.comments
 

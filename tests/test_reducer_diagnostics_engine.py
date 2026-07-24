@@ -85,7 +85,7 @@ class _SpyReducer:
         self.calls: list[dict] = []
         self._diag = diagnostics or ReducerDiagnostics()
 
-    def reduce(self, patch_id, comments, series_ctx, mode, flags):
+    def reduce(self, patch_id, comments, series_ctx, mode, flags, diff=""):
         self.calls.append({"patch_id": patch_id, "mode": mode})
         return ReducerResult(comments=comments, actions=[], diagnostics=self._diag)
 

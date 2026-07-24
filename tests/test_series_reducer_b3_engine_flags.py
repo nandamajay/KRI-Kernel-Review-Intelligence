@@ -101,7 +101,7 @@ class _SpyReducer:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def reduce(self, patch_id, comments, series_ctx, mode, flags):
+    def reduce(self, patch_id, comments, series_ctx, mode, flags, diff=""):
         self.calls.append(
             {
                 "patch_id": patch_id,

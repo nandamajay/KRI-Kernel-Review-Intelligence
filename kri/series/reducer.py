@@ -31,6 +31,7 @@ from kri.series.models import (
     SeriesReviewContext,
 )
 from kri.common.models import Severity as _Severity
+from kri.series.extractors import extract_referenced_symbols as _extract_refs
 
 if TYPE_CHECKING:
     from kri.llm.models import InlineComment
@@ -235,6 +236,7 @@ class SeriesReducer:
         series_ctx: SeriesReviewContext | None,
         mode: Mode = "off",
         flags: dict[str, bool] | None = None,
+        diff: str = "",
     ) -> ReducerResult:
         """Run enabled rules against ``comments`` for a single patch.
 
@@ -269,7 +271,7 @@ class SeriesReducer:
                 continue
             evaluate_fn = getattr(self, f"_evaluate_{rule.kind.name.split('_')[0]}")
             apply_fn = getattr(self, f"_apply_{rule.kind.name.split('_')[0]}")
-            rule_actions = evaluate_fn(patch_id, working, series_ctx)
+            rule_actions = evaluate_fn(patch_id, working, series_ctx, diff)
             actions.extend(rule_actions)
             if mode == "on" and rule_actions:
                 working = apply_fn(working, rule_actions)
@@ -369,6 +371,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         """Trigger R1 for findings that complain about a missing binding
         for a compatible / DT-property that a sibling patch in this
@@ -457,6 +460,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         """Trigger R3 for findings that flag an *external* dependency
         which is actually declared by a sibling patch in this series.
@@ -553,6 +557,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         """Cluster findings by ``(file, line // 10, category-class)`` and
         emit one merge action per cluster of size ≥ 2.
@@ -709,6 +714,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         return []
 
@@ -724,6 +730,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         return []
 
@@ -739,6 +746,7 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
         return []
 
@@ -754,8 +762,64 @@ class SeriesReducer:
         patch_id: str,
         comments: list[InlineComment],
         series_ctx: SeriesReviewContext,
+        diff: str = "",
     ) -> list[ReducerAction]:
-        return []
+        """Emit R8_COUPLING_NOTE actions when patch_b (this patch) references
+        a C symbol introduced by an earlier patch in the series.
+
+        Spec §6 R8 / readiness review §4.5:
+          - ``consumed`` = symbols in ``c_symbols`` that were introduced by
+            some other patch AND appear as identifiers in ``diff``'s added
+            lines (word-boundary match via ``extract_referenced_symbols``).
+          - Guard: if ANY inline comment already contains the symbol as a
+            whole word, skip that symbol — it is already discussed.
+          - Ambiguity resolution per readiness review §4.5: "already discusses"
+            = token-level exact match (the symbol appears in the comment text).
+          - Additive only: no comment is modified or dropped.
+        """
+        if not diff or not comments:
+            return []
+
+        c_symbols = series_ctx.declared_symbols.c_symbols
+        # Only symbols declared by OTHER patches (not this one).
+        foreign_syms = {s for s, p in c_symbols.items() if p != patch_id}
+        if not foreign_syms:
+            return []
+
+        consumed = _extract_refs(diff, foreign_syms)
+        if not consumed:
+            return []
+
+        # Build set of symbols already discussed in inline comments.
+        discussed: set[str] = set()
+        for c in comments:
+            text = (c.message or "").lower() + " " + (c.upstream_comment or "").lower()
+            for sym in consumed:
+                if sym.lower() in text:
+                    discussed.add(sym)
+
+        novel = consumed - discussed
+        if not novel:
+            return []
+
+        # Group by introducing patch so we emit one action per (patch_a, patch_b) pair.
+        by_introducer: dict[str, set[str]] = {}
+        for sym in novel:
+            introducer = c_symbols[sym]
+            by_introducer.setdefault(introducer, set()).add(sym)
+
+        actions: list[ReducerAction] = []
+        for patch_a_id, syms in sorted(by_introducer.items()):
+            actions.append(
+                ReducerAction(
+                    kind=ReducerActionKind.R8_COUPLING_NOTE,
+                    patch_id=patch_id,
+                    finding_ref="",
+                    related_patch_id=patch_a_id,
+                    reason=",".join(sorted(syms)),
+                )
+            )
+        return actions
 
     def _apply_R8(
         self,
