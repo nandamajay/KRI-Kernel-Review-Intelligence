@@ -10,9 +10,12 @@ from typing import Any, Literal
 
 from kri.common.models import (
     Decision,
+    Evidence,
     EvidenceGraph,
+    EvidenceSourceType,
     Patch,
     PatchSeries,
+    Provenance,
     ReasoningLayer,
     SeriesContext,
     Severity,
@@ -133,6 +136,44 @@ def _llm_comment_to_decision(
     )
 
 
+def _enrich_with_blame(
+    evidence_graph: EvidenceGraph,
+    file_path: str,
+    line_number: int,
+    repo_manager: Any,
+) -> None:
+    """Enrich an EvidenceGraph with BLAME_HISTORY evidence from git blame.
+
+    WP4-E: Adds one Evidence node per commit found by blame. Each node's
+    evidence_id is blake2b/8 of "{file}:{line}:{commit_hash}" — deterministic,
+    §40 safe. Provenance.commit_hash is set so EvidenceEngineImpl.verify() will
+    mark it verified.
+
+    Mutates evidence_graph.evidence in place. Degrades gracefully on any error.
+    Does NOT write to the EKG — blame evidence is ephemeral per-review context.
+    """
+    try:
+        blame_entries = repo_manager.blame(file_path, line_number)
+    except Exception:
+        return
+    for entry in blame_entries:
+        commit_hash = entry.get("commit", "")
+        if not commit_hash:
+            continue
+        raw = f"{file_path}:{line_number}:{commit_hash}"
+        ev_id = hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
+        summary = entry.get("summary", "")[:120]
+        ev = Evidence(
+            evidence_id=ev_id,
+            source_type=EvidenceSourceType.BLAME_HISTORY,
+            summary=summary or f"git blame: {file_path}:{line_number}",
+            provenance=Provenance(commit_hash=commit_hash),
+            verified=False,
+            strength=0.0,
+        )
+        evidence_graph.evidence.append(ev)
+
+
 def _apply_status_to_dict(r: Any) -> dict:
     """Serialise an ``ApplicabilityResult`` to a plain dict for metadata storage."""
     return {
@@ -188,6 +229,7 @@ class IntelligentReviewEngine:
         evidence_engine: Any | None = None,
         knowledge_manager: Any | None = None,
         confidence_engine: Any | None = None,
+        repo_manager: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
@@ -200,6 +242,8 @@ class IntelligentReviewEngine:
         self._knowledge_manager = knowledge_manager
         # WP4-C: CFM shadow mode (None = CFM scoring disabled, no gate effect)
         self._confidence_engine = confidence_engine
+        # WP4-E: repo_manager for blame-backed evidence (None = blame disabled)
+        self._repo_manager = repo_manager
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -478,6 +522,21 @@ class IntelligentReviewEngine:
                 logger.warning("evidence gather failed for %s: %s", decision.decision_id, _ev_exc)
                 evidence_graph = EvidenceGraph(comment_id=decision.decision_id)
 
+            # WP4-E: enrich with BLAME_HISTORY evidence when repo_manager is wired.
+            # Blame nodes get verified=True via commit_hash provenance (same logic as
+            # EvidenceEngineImpl.verify()). This may promote evidence_missing → blame_backed.
+            if self._repo_manager is not None:
+                _enrich_with_blame(
+                    evidence_graph, comment.file_path, comment.line_number, self._repo_manager
+                )
+                # Verify freshly-added blame evidence (commit_hash present → verified).
+                for ev in evidence_graph.evidence:
+                    if ev.source_type == EvidenceSourceType.BLAME_HISTORY and not ev.verified:
+                        if ev.provenance.commit_hash and ev.provenance.commit_hash.strip():
+                            ev.verified = True
+                            # BLAME_HISTORY priority=9 → strength = max(0, 1-(9-1)*0.08) = 0.36
+                            ev.strength = max(0.0, 1.0 - (9 - 1) * 0.08)
+
             # WP4-C: CFM shadow mode — score is computed but never used as gate.
             if self._confidence_engine is not None:
                 try:
@@ -488,9 +547,17 @@ class IntelligentReviewEngine:
                     logger.warning("cfm score failed for %s: %s", decision.decision_id, _cfm_exc)
 
             if evidence_graph.has_verified_evidence():
-                # Distinguish rule-backed vs generic support.
-                if evidence_graph.subsystem_rule is not None:
+                # Distinguish blame-backed vs rule-backed vs generic support.
+                has_rule = evidence_graph.subsystem_rule is not None
+                verified_evs = [ev for ev in evidence_graph.evidence if ev.verified]
+                all_blame = bool(verified_evs) and all(
+                    ev.source_type == EvidenceSourceType.BLAME_HISTORY
+                    for ev in verified_evs
+                )
+                if has_rule:
                     comment.evidence_status = "rule_backed"
+                elif all_blame:
+                    comment.evidence_status = "blame_backed"
                 else:
                     comment.evidence_status = "supported"
                 result.append(comment)

@@ -65,6 +65,8 @@ def _make_evidence_engine(*, has_verified: bool = False, has_rule: bool = False)
         exceptions=[],
         version_range=None,
     ) if has_rule else None
+    # WP4-E: _apply_evidence_gate iterates evidence_graph.evidence for has_non_blame check.
+    graph.evidence = []
     engine.gather.return_value = graph
     return engine
 

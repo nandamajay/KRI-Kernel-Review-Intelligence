@@ -331,14 +331,15 @@ def create_app(
             client = LLMClient(llm_config)
             static_analysis = None
             gate = None
+            repo_mgr = None
             kernel_path = _default_kernel_path()
             if kernel_path:
                 static_analysis = StaticAnalysisManagerImpl(
                     StaticAnalysisConfig(repo_path=kernel_path)
                 )
                 try:
-                    rm = RepositoryManagerImpl(RepoConfig(kernel_path))
-                    gate = ApplicabilityGate(rm)
+                    repo_mgr = RepositoryManagerImpl(RepoConfig(kernel_path))
+                    gate = ApplicabilityGate(repo_mgr)
                 except ValueError:
                     pass  # kernel_path not a valid repo; gate disabled
             # WP4-B: wire evidence engine — constructed only when a KnowledgeManager
@@ -362,6 +363,7 @@ def create_app(
                 evidence_engine=evidence_engine,
                 knowledge_manager=review_km,
                 confidence_engine=confidence_engine,
+                repo_manager=repo_mgr,
             )
             report = engine.review(series)
             return report.model_dump()

@@ -58,6 +58,8 @@ def _make_evidence_engine(*, has_verified: bool = True) -> MagicMock:
     graph = MagicMock(spec=EvidenceGraph)
     graph.has_verified_evidence.return_value = has_verified
     graph.subsystem_rule = None
+    # WP4-E: _apply_evidence_gate iterates evidence_graph.evidence for has_non_blame check.
+    graph.evidence = []
     engine.gather.return_value = graph
     return engine
 
