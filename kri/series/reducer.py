@@ -16,7 +16,7 @@ byte-identical to the pre-WP-S1B post-``_merge_comments`` path.
   proper companion-presence check.
 - **R5 / R6 / R7 are gated** behind per-rule feature flags
   ``series_r{5,6,7}_enabled`` and default to disabled per readiness §6.1.
-- Rule sequencing (spec §5.2, readiness §6.3): R1 → R3 → R4 → R5 → R6 → R7 → R8.
+- Rule sequencing (spec §5.2, readiness §6.3): R1 → R3 → R7 → R4 → R5 → R6 → R8.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from kri.series.models import (
 )
 from kri.common.models import Severity as _Severity
 from kri.series.extractors import extract_referenced_symbols as _extract_refs
+from kri.series.extractors import extract_containing_function as _extract_fn
 
 if TYPE_CHECKING:
     from kri.llm.models import InlineComment
@@ -130,6 +131,22 @@ _R3_PRECONDITION_HINTS: tuple[str, ...] = (
     "unresolved reference",
 )
 
+_R7_TRIGGER_PHRASES: tuple[str, ...] = (
+    "pre-existing",
+    "predates the current patch",
+    "not introduced by this patch",
+    "not something to address here",
+)
+
+# R6 categories that are suppressible below the confidence threshold.
+_R6_SUPPRESSIBLE_CATEGORIES = frozenset({"convention", "nit", "style"})
+
+
+def _r5_tokens(comment: "InlineComment") -> frozenset[str]:
+    """Return the token set for R5 Jaccard from a comment's message fields."""
+    text = " ".join(filter(None, [comment.message, comment.upstream_comment])).lower()
+    return frozenset(tok for tok in text.split() if len(tok) >= 4)
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -217,16 +234,17 @@ class SeriesReducer:
     readiness review §7 milestone plan.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, low_signal_confidence_threshold: float = 0.55) -> None:
+        self._low_signal_threshold = low_signal_confidence_threshold
         # Rule ordering matches spec §5.2 / readiness §6.3.
         # R2 is deliberately omitted (deferred).
         self._rules: tuple[_Rule, ...] = (
             _Rule(ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS, None),
             _Rule(ReducerActionKind.R3_EXTERNAL_TO_INTERNAL_REWRITE, None),
+            _Rule(ReducerActionKind.R7_PRE_EXISTING_SUPPRESS, "series_r7_enabled"),
             _Rule(ReducerActionKind.R4_LINE_BUCKET_MERGE, None),
             _Rule(ReducerActionKind.R5_FUNCTION_SCOPE_MERGE, "series_r5_enabled"),
             _Rule(ReducerActionKind.R6_LOW_SIGNAL_SUPPRESS, "series_r6_enabled"),
-            _Rule(ReducerActionKind.R7_PRE_EXISTING_SUPPRESS, "series_r7_enabled"),
             _Rule(ReducerActionKind.R8_COUPLING_NOTE, None),
         )
 
@@ -723,14 +741,130 @@ class SeriesReducer:
         series_ctx: SeriesReviewContext,
         diff: str = "",
     ) -> list[ReducerAction]:
-        return []
+        """Function-scope dedup via pairwise Jaccard on same-file comment pairs.
+
+        Spec §6 R5 / readiness review §4.4:
+          - Pair all comments in the same file.
+          - Both must be non-floored and same-category-class (_same_category).
+          - extract_containing_function resolves the enclosing function from
+            the diff for each comment's line_number. If both resolve to the
+            same non-None function name, compute token overlap.
+          - Tokenize message+upstream_comment on whitespace, lowercase, keep
+            tokens with length >= 4.
+          - Trigger: Jaccard >= 0.35 AND shared token count >= 3.
+          - Keeper = higher confidence; tie → lower original index.
+          - Safety floor enforced: never merge floored comments.
+        """
+        if not diff or len(comments) < 2:
+            return []
+
+        # Group by file; only same-file pairs can share a function scope.
+        by_file: dict[str, list[InlineComment]] = {}
+        for c in comments:
+            if not self._is_safety_floored(c):
+                by_file.setdefault(c.file_path, []).append(c)
+
+        actions: list[ReducerAction] = []
+        already_absorbed: set[str] = set()
+
+        for file_comments in by_file.values():
+            if len(file_comments) < 2:
+                continue
+            n = len(file_comments)
+            for i in range(n):
+                ca = file_comments[i]
+                ref_a = _comment_ref(ca)
+                if ref_a in already_absorbed:
+                    continue
+                for j in range(i + 1, n):
+                    cb = file_comments[j]
+                    ref_b = _comment_ref(cb)
+                    if ref_b in already_absorbed:
+                        continue
+                    if not self._same_category(ca, cb):
+                        continue
+                    fn_a = _extract_fn(diff, ca.line_number)
+                    fn_b = _extract_fn(diff, cb.line_number)
+                    if fn_a is None or fn_b is None or fn_a != fn_b:
+                        continue
+                    toks_a = _r5_tokens(ca)
+                    toks_b = _r5_tokens(cb)
+                    shared = toks_a & toks_b
+                    union = toks_a | toks_b
+                    if not union:
+                        continue
+                    jaccard = len(shared) / len(union)
+                    if jaccard < 0.35 or len(shared) < 3:
+                        continue
+                    # Keeper = higher confidence; tie → earlier index (i wins).
+                    if ca.confidence >= cb.confidence:
+                        keeper, absorbed = ca, cb
+                        keeper_ref, absorbed_ref = ref_a, ref_b
+                    else:
+                        keeper, absorbed = cb, ca
+                        keeper_ref, absorbed_ref = ref_b, ref_a
+                    already_absorbed.add(absorbed_ref)
+                    actions.append(
+                        ReducerAction(
+                            kind=ReducerActionKind.R5_FUNCTION_SCOPE_MERGE,
+                            patch_id=patch_id,
+                            finding_ref=keeper_ref,
+                            file=keeper.file_path,
+                            line=keeper.line_number,
+                            reason=f"jaccard={jaccard:.2f},fn={fn_a}",
+                            absorbed_refs=(absorbed_ref,),
+                            related_patch_id="",
+                        )
+                    )
+                    # If ca was just absorbed, stop the inner loop — ca is gone.
+                    if absorbed_ref == ref_a:
+                        break
+        return actions
 
     def _apply_R5(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        """Apply R5 merges — same structure as _apply_R4 MERGE path."""
+        if not actions:
+            return comments
+        drop_refs: set[str] = set()
+        keeper_updates: dict[str, list[str]] = {}
+        keeper_severity: dict[str, _Severity] = {}
+        ref_to_cmt = {_comment_ref(c): c for c in comments}
+        for a in actions:
+            drop_refs.update(a.absorbed_refs)
+            keeper_updates.setdefault(a.finding_ref, [])
+            cluster_sevs: list[_Severity] = []
+            keeper_cmt = ref_to_cmt.get(a.finding_ref)
+            if keeper_cmt is not None:
+                cluster_sevs.append(keeper_cmt.severity)
+            for absorbed_ref in a.absorbed_refs:
+                absorbed = ref_to_cmt.get(absorbed_ref)
+                if absorbed is None:
+                    continue
+                snippet = absorbed.upstream_comment or absorbed.message or ""
+                if snippet:
+                    keeper_updates[a.finding_ref].append(snippet)
+                cluster_sevs.append(absorbed.severity)
+            if cluster_sevs:
+                keeper_severity[a.finding_ref] = max(
+                    cluster_sevs, key=lambda s: _SEVERITY_RANK[s]
+                )
+        out: list[InlineComment] = []
+        for c in comments:
+            ref = _comment_ref(c)
+            if ref in drop_refs:
+                continue
+            snippets = keeper_updates.get(ref)
+            if snippets is not None:
+                tail = "".join(f"\nRelated remark: {s}" for s in snippets)
+                sev = keeper_severity.get(ref, c.severity)
+                out.append(c.model_copy(update={"message": (c.message or "") + tail, "severity": sev}))
+            else:
+                out.append(c)
+        return out
 
     def _evaluate_R6(
         self,
@@ -739,14 +873,41 @@ class SeriesReducer:
         series_ctx: SeriesReviewContext,
         diff: str = "",
     ) -> list[ReducerAction]:
-        return []
+        """Low-signal suppression — spec §6 R6.
+
+        Trigger: confidence < threshold (default 0.55) AND category in
+        {convention, nit, style} AND severity == info.
+        Safety floor: never suppresses BLOCKERs or high-conf WARNINGs
+        (guaranteed by the category+severity guard: both require severity==info).
+        """
+        actions: list[ReducerAction] = []
+        for comment in comments:
+            if (
+                comment.confidence < self._low_signal_threshold
+                and comment.category.lower() in _R6_SUPPRESSIBLE_CATEGORIES
+                and comment.severity == _Severity.INFO
+            ):
+                actions.append(
+                    ReducerAction(
+                        kind=ReducerActionKind.R6_LOW_SIGNAL_SUPPRESS,
+                        patch_id=patch_id,
+                        finding_ref=_comment_ref(comment),
+                        file=comment.file_path,
+                        line=comment.line_number,
+                        reason=f"confidence={comment.confidence:.2f}<{self._low_signal_threshold}",
+                        absorbed_refs=(),
+                        related_patch_id="",
+                    )
+                )
+        return actions
 
     def _apply_R6(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        drop_refs = {a.finding_ref for a in actions}
+        return [c for c in comments if _comment_ref(c) not in drop_refs]
 
     def _evaluate_R7(
         self,
@@ -755,14 +916,39 @@ class SeriesReducer:
         series_ctx: SeriesReviewContext,
         diff: str = "",
     ) -> list[ReducerAction]:
-        return []
+        """Pre-existing suppression — spec §6 R7.
+
+        Trigger: ANY R7 phrase in text_lower AND severity == info.
+        Safety floor: severity==info requirement means no BLOCKER or WARNING
+        is ever touched.
+        """
+        actions: list[ReducerAction] = []
+        for comment in comments:
+            if comment.severity != _Severity.INFO:
+                continue
+            haystack = " ".join(filter(None, [comment.message, comment.upstream_comment])).lower()
+            if any(phrase in haystack for phrase in _R7_TRIGGER_PHRASES):
+                actions.append(
+                    ReducerAction(
+                        kind=ReducerActionKind.R7_PRE_EXISTING_SUPPRESS,
+                        patch_id=patch_id,
+                        finding_ref=_comment_ref(comment),
+                        file=comment.file_path,
+                        line=comment.line_number,
+                        reason="pre_existing",
+                        absorbed_refs=(),
+                        related_patch_id="",
+                    )
+                )
+        return actions
 
     def _apply_R7(
         self,
         comments: list[InlineComment],
         actions: list[ReducerAction],
     ) -> list[InlineComment]:
-        return comments
+        drop_refs = {a.finding_ref for a in actions}
+        return [c for c in comments if _comment_ref(c) not in drop_refs]
 
     def _evaluate_R8(
         self,
