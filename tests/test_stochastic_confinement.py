@@ -51,8 +51,8 @@ _ALLOWED_CALLS: dict[str, set[int]] = {
     # Elapsed-wall-clock telemetry only: feeds IntelligentReport.metadata
     # ["processing_time_seconds"], which is never read by any
     # Decision/Confidence/Report computation or asserted on by any test.
-    # WP4-C: confidence_engine param added to __init__, shifted these lines.
-    "llm/reviewer.py": {229, 245},
+    # WP4-D: snapshot block added to review(), shifted elapsed line to 255.
+    "llm/reviewer.py": {229, 255},
     # time.monotonic(): pure live-network rate-limiting delay, has zero
     # effect on parsed thread/patch content.
     # datetime.now(): retrieved_at is set ONLY on a genuine cache-miss live

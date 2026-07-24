@@ -228,6 +228,16 @@ class IntelligentReviewEngine:
         """Run all agents on every patch in the series."""
         start = time.monotonic()
 
+        # WP4-D: capture knowledge state BEFORE fan-out so all per-patch evidence
+        # queries are stamped against the same immutable snapshot.
+        knowledge_state_id: str | None = None
+        if self._knowledge_manager is not None:
+            try:
+                ks = self._knowledge_manager.snapshot()
+                knowledge_state_id = ks.state_id
+            except Exception as _ks_exc:
+                logger.warning("knowledge_manager.snapshot() failed: %s", _ks_exc)
+
         series_ctx: SeriesReviewContext | None = None
         if self._series_context_builder is not None:
             series_ctx = self._series_context_builder.build(series)
@@ -260,6 +270,8 @@ class IntelligentReviewEngine:
             metadata["series_context"] = series_ctx.to_metadata()
         if self._gate is not None:
             metadata["apply_status_summary"] = _summarize_apply_status(patch_reviews)
+        if knowledge_state_id is not None:
+            metadata["knowledge_state_id"] = knowledge_state_id
 
         return IntelligentReport(
             series_id=series.series_id,
