@@ -60,6 +60,9 @@ _LEGACY_KEYS = frozenset(
 
 _B2_ADDED_KEYS = frozenset({"series_prefix", "series_provenance"})
 
+# WP4-A added evidence_status and cfm_confidence to InlineComment.
+_WP4A_ADDED_KEYS = frozenset({"evidence_status", "cfm_confidence"})
+
 
 def _legacy_payload() -> dict:
     """A pre-B2 InlineComment payload (JSON keys only from _LEGACY_KEYS)."""
@@ -144,17 +147,20 @@ def test_SM13_B_default_round_trip_matches_legacy_keys_with_exclude_defaults():
 
 def test_SM13_B_default_round_trip_full_dump_adds_only_the_two_new_keys():
     """The dual of SM13-B: a **full** ``model_dump()`` (defaults included)
-    must add EXACTLY the two new keys — no more, no less."""
+    must add EXACTLY the two B2 keys plus the WP4-A keys — no others."""
     cmt = InlineComment.model_validate(_legacy_payload())
     full = cmt.model_dump()
 
     added = set(full.keys()) - _LEGACY_KEYS
-    assert added == _B2_ADDED_KEYS, (
-        f"unexpected key delta vs. legacy — added={added}, expected={_B2_ADDED_KEYS}"
+    expected = _B2_ADDED_KEYS | _WP4A_ADDED_KEYS
+    assert added == expected, (
+        f"unexpected key delta vs. legacy — added={added}, expected={expected}"
     )
     # And the added keys hold defaults.
     assert full["series_prefix"] == ""
     assert full["series_provenance"] is None
+    assert full["evidence_status"] == "unknown"
+    assert full["cfm_confidence"] is None
 
 
 # ---------------------------------------------------------------------------

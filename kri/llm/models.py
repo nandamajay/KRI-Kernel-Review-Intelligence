@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, PlainSerializer, field_validator
 
-from kri.common.models import Severity
+from kri.common.models import ConfidenceScore, Severity
 from kri.llm.sanitize import strip_trailers, strip_trailers_list
 from kri.series.models import SeriesProvenance
 
@@ -55,6 +55,11 @@ class InlineComment(BaseModel):
     reasoning: str = ""
     series_prefix: str = ""
     series_provenance: _SeriesProvenanceField = None
+    # WP4-A: evidence tracking fields (Phase 4 Track A)
+    # evidence_status transitions: unknown -> supported|rule_backed|blame_backed|
+    #   evidence_missing|safety_floored (set by evidence gate in WP4-B)
+    evidence_status: str = "unknown"
+    cfm_confidence: ConfidenceScore | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 

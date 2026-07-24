@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
-from kri.common.models import Patch, PatchSeries, Severity
+from kri.common.models import (
+    Decision,
+    EvidenceGraph,
+    Patch,
+    PatchSeries,
+    ReasoningLayer,
+    Severity,
+)
 from kri.llm.agents import CodeQualityAgent, PatchSummarizerAgent, SubsystemExpertAgent
 from kri.llm.client import LLMClient, LLMConfig, LLMOfflineError
 from kri.llm.formatter import extract_hunk_context, format_lore_reply
@@ -30,6 +38,97 @@ from kri.series import (
 from kri.lore_manager.version_discovery import format_prior_version_context
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# WP4-A helpers: InlineComment -> Decision converter
+# ---------------------------------------------------------------------------
+
+# Mapping from InlineComment.category strings to ReasoningLayer enum values.
+# This is the best-effort heuristic — all categories not explicitly listed
+# fall back to SEMANTIC.
+_CATEGORY_TO_LAYER: dict[str, ReasoningLayer] = {
+    "api_usage": ReasoningLayer.SEMANTIC,
+    "api": ReasoningLayer.SEMANTIC,
+    "memory": ReasoningLayer.SEMANTIC,
+    "locking": ReasoningLayer.SEMANTIC,
+    "error_handling": ReasoningLayer.SEMANTIC,
+    "null_check": ReasoningLayer.SEMANTIC,
+    "style": ReasoningLayer.STRUCTURAL,
+    "formatting": ReasoningLayer.STRUCTURAL,
+    "documentation": ReasoningLayer.STRUCTURAL,
+    "naming": ReasoningLayer.STRUCTURAL,
+    "design": ReasoningLayer.DESIGN,
+    "architecture": ReasoningLayer.DESIGN,
+    "integration": ReasoningLayer.INTEGRATION,
+    "kconfig": ReasoningLayer.INTEGRATION,
+    "build": ReasoningLayer.INTEGRATION,
+    "maintainability": ReasoningLayer.MAINTAINABILITY,
+    "abi": ReasoningLayer.ECOSYSTEM,
+    "ecosystem": ReasoningLayer.ECOSYSTEM,
+}
+
+
+def _comment_layer(category: str) -> ReasoningLayer:
+    """Deterministic category -> ReasoningLayer mapping."""
+    return _CATEGORY_TO_LAYER.get(category.lower().strip(), ReasoningLayer.SEMANTIC)
+
+
+def _match_dkp_rule(comment: InlineComment, dkp: Any | None) -> str | None:
+    """Best-effort: find a DKP rule_id whose category matches the comment.
+
+    Matches on comment.category against rule.category (case-insensitive prefix).
+    Returns the first matching rule_id, or None if no DKP or no match.
+    Does NOT write to the EKG — read-only query.
+    """
+    if dkp is None:
+        return None
+    try:
+        rules = dkp.rules() if hasattr(dkp, "rules") else None
+        if not rules:
+            return None
+        cat_lower = comment.category.lower().strip()
+        for rule in rules:
+            rule_cat = getattr(rule, "category", "").lower().strip()
+            if rule_cat and (cat_lower == rule_cat or cat_lower.startswith(rule_cat)):
+                return rule.rule_id
+    except Exception:  # noqa: BLE001 - DKP query failures degrade gracefully
+        pass
+    return None
+
+
+def _llm_comment_to_decision(
+    comment: InlineComment,
+    patch: Patch,
+    series: PatchSeries,
+    dkp: Any | None = None,
+) -> Decision:
+    """Convert an LLM-generated InlineComment to a Decision for evidence gating.
+
+    decision_id uses blake2b/8 of stable comment fields (§40 compliant — no
+    uuid/random/time). evidence_graph is initialized as an empty-but-valid
+    EvidenceGraph so downstream callers never receive None.
+
+    This function is pure: same inputs -> same Decision. No EKG writes.
+    """
+    raw = f"{comment.file_path}:{comment.line_number}:{comment.category}:{comment.message}"
+    decision_id = hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
+
+    rule_id = _match_dkp_rule(comment, dkp)
+    layer = _comment_layer(comment.category)
+
+    return Decision(
+        decision_id=decision_id,
+        series_id=series.series_id,
+        patch_id=patch.patch_id,
+        layer=layer,
+        category=comment.category,
+        severity=comment.severity,
+        location=f"{comment.file_path}:{comment.line_number}",
+        statement=comment.message,
+        rule_id=rule_id,
+        evidence_graph=EvidenceGraph(comment_id=decision_id),
+    )
 
 
 def _apply_status_to_dict(r: Any) -> dict:
