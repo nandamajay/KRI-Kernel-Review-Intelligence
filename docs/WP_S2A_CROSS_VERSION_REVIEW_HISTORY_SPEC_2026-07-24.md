@@ -89,13 +89,14 @@ This is constructed in `kri/web/app.py`'s `intelligent_review()` handler (same p
 Every `Message` parsed by `mbox.py` has `in_reply_to: str | None`. For versioned series (v2+), submitters routinely set `In-Reply-To` on the cover letter to the v(n-1) cover letter message-id.
 
 Algorithm:
-1. Extract the cover letter message from `series.patches[0].series_id` (the current thread's root).
-2. Walk `Message.in_reply_to` up the chain through `lore_manager.fetch()` until either:
+1. Guard: if `series.version <= 1`, return `{}` immediately — no prior versions exist.
+2. Fetch the Thread for the current series via `lore_manager.fetch(series.series_id)`. Locate the cover letter by finding the message whose `message_id == thread.thread_id` (the thread root — this is NOT necessarily `messages[0]`). Read that message's `in_reply_to`.
+3. Walk `Message.in_reply_to` up the chain: for each `in_reply_to` message-id, call `lore_manager.fetch(in_reply_to)` to get the prior Thread, then locate ITS cover letter by the same rule (message with `message_id == thread.thread_id`), and read that message's `in_reply_to` for the next step. Continue until either:
    - We reach a message with `SubjectInfo.version == 1` (found v1), OR
    - `in_reply_to` is `None` or resolves to a non-patch message, OR
    - We have walked more than `max_depth=10` steps (guard against infinite loops from malformed threading).
-3. For each step, validate the resolved thread is a patch series by checking `parse_subject()` yields `is_cover_letter=True` and `version < current_version`.
-4. Author-match guard: verify `PatchSeries.patches[0].author` matches the current series' author (case-insensitive email comparison).
+4. For each step, validate the resolved thread is a patch series by checking `parse_subject()` yields `is_cover_letter=True` and `version < current_version`.
+5. Author-match guard: verify `PatchSeries.patches[0].author` matches the current series' author (case-insensitive email comparison).
 
 ### 4.2 Fallback: `lore_manager.search()`
 
@@ -139,14 +140,18 @@ _ACK_WORDS = re.compile(r'\b(fixed|done|addressed|changed|updated|applied|remove
 
 If the regex matches, mark `address_status="addressed_explicit"`. Do not inject this concern.
 
-### H2 — Diff pattern absence (annotate)
+### H2 — Diff pattern absence (annotate only)
+
+H2 is annotation-only (NOT suppression). Only H1 suppresses silently; H2 modulates the annotation.
 
 1. Extract 2–5 lowercase tokens from the critique body that look like a symbol or function call: `re.findall(r'\b[a-z_][a-z_0-9]{3,}\b', critique.message.lower())[:5]`.
 2. For the same file(s) touched by the prior-version concern (from `critique.target_patch_id → prior_series.patches`), check whether those tokens appear on any `+` line in the corresponding v(n) patch diff.
-3. If none of the tokens appear on any `+` diff line: mark `address_status="addressed_diff"`. Do not inject.
+3. If none of the tokens appear on any `+` diff line: mark `address_status="outstanding"`, `address_notes="[no matching diff pattern in v{n}; verify resolution]"`. Inject with annotation.
 4. If tokens appear but context is different: mark `address_status="outstanding"`, `address_notes="[may be addressed in v{n}]"`. Inject with annotation.
 
-H2 fires reliably for API-misuse comments naming specific functions. It is unreliable for stylistic comments (use H1 as the primary gate for those).
+Rationale: promoting H2 to suppression creates a false-negative risk — a symbol extracted from a concern may appear in v(n)'s diff in a different context (e.g., moved inside a helper), making the concern appear resolved when it was not. Annotation is safe in both directions; the LLM can weigh the hint. H1 (explicit author ack) is the only reliable suppression signal.
+
+H2 fires reliably for API-misuse comments naming specific functions. It is unreliable for stylistic comments (the identifier extraction will pull generic tokens that appear everywhere).
 
 ### H3 — No-reply outstanding (inject with low weight)
 
@@ -159,7 +164,7 @@ If neither H1 nor H2 fires:
 | H1 | H2 | H3 | Decision |
 |---|---|---|---|
 | explicit ack | — | — | suppress |
-| — | pattern absent | — | suppress |
+| — | pattern absent | — | inject + note "no matching diff pattern; verify resolution" |
 | — | pattern present (partially) | — | inject + note "may be addressed" |
 | — | tokens not extractable | no reply | inject + note "author did not reply" |
 | — | tokens not extractable | reply exists | inject with no annotation |
@@ -194,7 +199,9 @@ Rules:
 - `REVIEW_CODE_QUALITY_PROMPT` (currently line ~153)
 - `REVIEW_SUBSYSTEM_PROMPT` (currently line ~189)
 
-Placement rule: if `prior_version_context == ""`, the block is absent (no trailing whitespace added). This preserves byte-identity for the existing test `test_series_reducer_b12_determinism_bytes` when no prior version data is available.
+Placement rule: if `prior_version_context == ""`, the block is absent (no trailing whitespace added). This preserves byte-identity for the no-prior-data path.
+
+**Critical implementation note:** every call site that formats `REVIEW_CODE_QUALITY_PROMPT` or `REVIEW_SUBSYSTEM_PROMPT` via `str.format()` must supply `prior_version_context=` as a keyword argument. Python's `str.format()` raises `KeyError` for unbound placeholders — there is no default syntax. The agents' `review()` signatures must accept `prior_version_context: str = ""` and pass it at every `.format()` call site. File `kri/llm/agents.py` (not listed in the original File Inventory — see §10 update) is the primary call site. Every existing agent test must remain green after this change; the `""` default ensures backward compatibility with tests that do not supply the new argument.
 
 ---
 
@@ -219,9 +226,9 @@ Test: `test_TB_S2A_gate_result_still_never_in_prompt` — extends `test_TB90_T24
 
 ## 9. Test Specification
 
-Minimum test coverage for WP-S2A — 12 tests across 3 sections:
+Minimum test coverage for WP-S2A — 13 tests across 3 sections:
 
-### 9a — Discovery tests (5 tests)
+### 9a — Discovery tests (6 tests)
 
 | ID | Name | Assertion |
 |---|---|---|
@@ -230,6 +237,7 @@ Minimum test coverage for WP-S2A — 12 tests across 3 sections:
 | TS2A-3 | `test_discover_rejects_author_mismatch` | Search returns a candidate with different author email; assert result is empty |
 | TS2A-4 | `test_discover_degrades_on_offline_error` | `fetch` raises `LoreOfflineError`; assert `discover_prior_version_thread_ids` returns `{}`, no exception |
 | TS2A-5 | `test_discover_respects_max_depth_guard` | Mock an `in_reply_to` cycle (A → B → A); assert no infinite loop, returns partial result |
+| TS2A-5b | `test_discover_returns_empty_for_v1_series` | Series with `version=1`; assert `discover_prior_version_thread_ids` returns `{}` without calling `fetch` or `search` |
 
 ### 9b — Reconciliation tests (4 tests)
 
@@ -256,10 +264,11 @@ Minimum test coverage for WP-S2A — 12 tests across 3 sections:
 |---|---|---|
 | `kri/lore_manager/version_discovery.py` | CREATE | New module |
 | `kri/lore_manager/__init__.py` | MODIFY | Export `discover_prior_version_thread_ids`, `PriorVersionFetcher` |
+| `kri/llm/agents.py` | MODIFY | Add `prior_version_context: str = ""` param to `CodeQualityAgent.review()` and `SubsystemExpertAgent.review()`; pass to `REVIEW_*_PROMPT.format()` |
 | `kri/llm/prompts.py` | MODIFY | Add `{prior_version_context}` placeholder |
 | `kri/llm/reviewer.py` | MODIFY | Accept `prior_version_fetcher`, wire into `_review_patch` |
 | `kri/web/app.py` | MODIFY | Construct `PriorVersionFetcher` in `intelligent_review()` |
-| `tests/test_version_discovery.py` | CREATE | 12 tests (TS2A-1..12) |
+| `tests/test_version_discovery.py` | CREATE | 13 tests (TS2A-1..12 + TS2A-5b) |
 | `tests/test_stochastic_confinement.py` | POSSIBLY MODIFY | If `time.monotonic()` added to version_discovery |
 
 ---
@@ -270,11 +279,12 @@ Minimum test coverage for WP-S2A — 12 tests across 3 sections:
 |---|---|
 | `version_discovery.py` (all functions + `CritiqueReplyPair`) | ~280 |
 | `lore_manager/__init__.py` exports | ~5 |
+| `agents.py` `prior_version_context` param + format() wiring | ~15 |
 | `prompts.py` placeholder additions | ~8 |
 | `reviewer.py` wiring | ~40 |
 | `app.py` fetcher construction | ~20 |
-| **Total non-test** | **~353** |
-| `tests/test_version_discovery.py` (12 tests) | ~200 |
+| **Total non-test** | **~368** |
+| `tests/test_version_discovery.py` (13 tests) | ~220 |
 
 ---
 
