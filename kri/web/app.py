@@ -323,6 +323,7 @@ def create_app(
 
         # Run LLM review.
         try:
+            from kri.confidence_engine.engine import ConfidenceEngineImpl
             from kri.evidence_engine.engine import EvidenceEngineImpl
             from kri.static_analysis import StaticAnalysisConfig, StaticAnalysisManagerImpl
 
@@ -345,6 +346,8 @@ def create_app(
             evidence_engine = None
             if review_km is not None:
                 evidence_engine = EvidenceEngineImpl(review_km)
+            # WP4-C: CFM shadow mode — always constructed; scores stored but not gated.
+            confidence_engine = ConfidenceEngineImpl()
             engine = IntelligentReviewEngine(
                 client=client,
                 dkp=dkp,
@@ -358,6 +361,7 @@ def create_app(
                 prior_version_fetcher=PriorVersionFetcher(lore, patches),
                 evidence_engine=evidence_engine,
                 knowledge_manager=review_km,
+                confidence_engine=confidence_engine,
             )
             report = engine.review(series)
             return report.model_dump()

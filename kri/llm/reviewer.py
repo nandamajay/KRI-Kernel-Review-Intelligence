@@ -187,6 +187,7 @@ class IntelligentReviewEngine:
         prior_version_fetcher: Any | None = None,
         evidence_engine: Any | None = None,
         knowledge_manager: Any | None = None,
+        confidence_engine: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
@@ -197,6 +198,8 @@ class IntelligentReviewEngine:
         # WP4-B: evidence engine wiring (None = evidence gate disabled, mode-off safe)
         self._evidence_engine = evidence_engine
         self._knowledge_manager = knowledge_manager
+        # WP4-C: CFM shadow mode (None = CFM scoring disabled, no gate effect)
+        self._confidence_engine = confidence_engine
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -462,6 +465,15 @@ class IntelligentReviewEngine:
             except Exception as _ev_exc:
                 logger.warning("evidence gather failed for %s: %s", decision.decision_id, _ev_exc)
                 evidence_graph = EvidenceGraph(comment_id=decision.decision_id)
+
+            # WP4-C: CFM shadow mode — score is computed but never used as gate.
+            if self._confidence_engine is not None:
+                try:
+                    comment.cfm_confidence = self._confidence_engine.score(
+                        decision, evidence_graph
+                    )
+                except Exception as _cfm_exc:
+                    logger.warning("cfm score failed for %s: %s", decision.decision_id, _cfm_exc)
 
             if evidence_graph.has_verified_evidence():
                 # Distinguish rule-backed vs generic support.
