@@ -694,7 +694,10 @@ function renderIntelligent(r){
         const sevClass=c.severity==='blocker'?'severity-blocker':c.severity==='warning'?'severity-warning':'severity-info';
         html+=`<div class="finding-card ${sevClass}">`;
         html+=`<p class="finding-location"><b>File:</b> ${esc(c.file_path)}</p>`;
-        html+=`<p class="finding-location"><b>Line:</b> ${c.line_number} &nbsp; <b>Category:</b> ${esc(c.category)} &nbsp; <b>Severity:</b> ${esc(c.severity)}</p>`;
+        html+=`<p class="finding-location"><b>Line:</b> ${esc(c.line_number)} &nbsp; <b>Category:</b> ${esc(c.category)} &nbsp; <b>Severity:</b> ${esc(c.severity)}</p>`;
+        if(c.series_prefix){
+          html+=`<p style="margin:0.3rem 0;font-size:0.82rem;color:#6c757d"><b>Series tag:</b> ${esc(c.series_prefix)}</p>`;
+        }
         if(c.hunk_context){
           html+=`<div class="code-context">${esc(c.hunk_context)}</div>`;
         }
@@ -720,6 +723,34 @@ function renderIntelligent(r){
     if(pr.lore_reply){
       html+=`<details style="margin:1rem 0"><summary><b>Lore Email Reply (click to expand)</b></summary>
         <pre style="white-space:pre-wrap;background:#f9f9f9;color:#1a1a1a;border:1px solid #ddd;padding:1rem">${esc(pr.lore_reply)}</pre></details>`;
+    }
+    const reducerActions=(pr.metadata&&pr.metadata.series_reducer_actions)||[];
+    const couplingNotes=reducerActions.filter(a=>a.kind==='coupling_note');
+    const nonCouplingActions=reducerActions.filter(a=>a.kind!=='coupling_note');
+    if(couplingNotes.length){
+      html+=`<details style="margin:0.6rem 0"><summary><b>Cross-patch Coupling Notes (${couplingNotes.length})</b></summary>
+        <div style="padding:0.4rem">`;
+      for(const a of couplingNotes){
+        html+=`<div style="border-left:3px solid #8e44ad;padding:0.3rem 0.6rem;margin:0.3rem 0;font-size:0.88rem">
+          <span style="font-weight:700;color:#8e44ad">Coupling →</span>
+          <span> patch <b>${esc(a.related_patch_id||'?')}</b></span>
+          ${a.reason?`<span style="color:#6c757d"> (${esc(a.reason)})</span>`:''}
+        </div>`;
+      }
+      html+=`</div></details>`;
+    }
+    if(nonCouplingActions.length){
+      html+=`<details style="margin:0.6rem 0"><summary><b>Series Reducer Actions (${nonCouplingActions.length})</b></summary>
+        <div style="padding:0.4rem">`;
+      for(const a of nonCouplingActions){
+        const kindColor=a.kind&&a.kind.includes('suppress')?'#e74c3c':a.kind&&a.kind.includes('merge')?'#e67e22':'#3498db';
+        html+=`<div style="border-left:3px solid ${kindColor};padding:0.3rem 0.6rem;margin:0.3rem 0;font-size:0.85rem;font-family:monospace">
+          <span style="color:${kindColor};font-weight:700">${esc(a.kind||'')}</span>
+          ${a.file?`<span style="color:#495057"> ${esc(a.file)}:${esc(a.line||'')}</span>`:''}
+          ${a.reason?`<span style="color:#6c757d"> — ${esc(a.reason)}</span>`:''}
+        </div>`;
+      }
+      html+=`</div></details>`;
     }
     html+=`</div>`;
   }
