@@ -32,7 +32,7 @@ from kri.llm.models import (
 )
 from kri.llm.prompts import AGGREGATE_REVIEW_PROMPT, SYSTEM_KERNEL_REVIEWER, build_domain_context
 from kri.llm.sanitize import strip_trailers
-from kri.governance import ConstitutionalRules, load_rules, log_governance_warnings
+from kri.governance import ConstitutionalRules, check_evidence_status, load_rules, log_governance_warnings
 from kri.series import (
     SeriesReducer,
     SeriesReviewContext,
@@ -430,6 +430,11 @@ class IntelligentReviewEngine:
             all_comments = self._apply_evidence_gate(
                 all_comments, patch, series, series_ctx_common
             )
+            # WP4-G: constitutional invariant check — evidence_missing BLOCKER/WARNING
+            # must never appear in published output (§28/§35 safety floor guarantee).
+            gov_violations = check_evidence_status(all_comments)
+            for violation in gov_violations:
+                logger.error("GOVERNANCE VIOLATION: %s", violation)
 
         # WP-S1B Step B1: series reducer runs AFTER _merge_comments + hunk_context
         # back-fill, BEFORE PatchReview assembly (authoritative ordering per

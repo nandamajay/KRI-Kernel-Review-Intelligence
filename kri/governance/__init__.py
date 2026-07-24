@@ -18,12 +18,13 @@ Usage::
 from __future__ import annotations
 
 from .rules import ConstitutionalRule, ConstitutionalRules, load_rules
-from .engine import check_sec40, log_governance_warnings
+from .engine import check_evidence_status, check_sec40, log_governance_warnings
 
 __all__ = [
     "ConstitutionalRule",
     "ConstitutionalRules",
     "load_rules",
+    "check_evidence_status",
     "check_sec40",
     "log_governance_warnings",
 ]

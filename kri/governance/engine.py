@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 from kri.governance.rules import ConstitutionalRules
 
@@ -43,6 +44,33 @@ def check_sec40(source: str, rules: ConstitutionalRules) -> list[str]:
     for label, pat in _SEC40_CHECKS:
         if pat.search(source):
             violations.append(label)
+    return violations
+
+
+def check_evidence_status(comments: list[Any]) -> list[str]:
+    """WP4-G: Return a list of constitutional violation descriptions for any
+    comment that has evidence_status='evidence_missing' and is a BLOCKER
+    or WARNING.
+
+    Per Constitution §28 / §35: a published comment with severity BLOCKER
+    or WARNING must not have evidence_status='evidence_missing'. The evidence
+    gate + safety floor in _apply_evidence_gate ensures this; this function
+    is the post-gate invariant check that detects any bypass.
+
+    Returns: list of violation strings (empty = invariant holds).
+    """
+    violations: list[str] = []
+    for comment in comments:
+        status = getattr(comment, "evidence_status", None)
+        severity = getattr(comment, "severity", None)
+        if status != "evidence_missing":
+            continue
+        sev_val = severity.value if hasattr(severity, "value") else str(severity)
+        if sev_val in ("blocker", "warning"):
+            loc = f"{getattr(comment, 'file_path', '?')}:{getattr(comment, 'line_number', '?')}"
+            violations.append(
+                f"§28 violation: {sev_val} comment at {loc} has evidence_status='evidence_missing'"
+            )
     return violations
 
 
