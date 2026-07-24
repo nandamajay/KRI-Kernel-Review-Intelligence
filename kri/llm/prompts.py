@@ -162,7 +162,7 @@ Review the following kernel patch for correctness issues. Focus on:
 - Incorrect API usage
 
 {domain_context}
-{static_findings}{series_context}
+{static_findings}{series_context}{prior_version_context}
 ## Commit Message
 {commit_message}
 
@@ -201,7 +201,7 @@ name) unless you can point to an actual rule, doc, or binding it violates. If yo
 cannot cite a concrete convention it breaks, it is not a finding — leave it out.
 
 {domain_context}
-{static_findings}{series_context}
+{static_findings}{series_context}{prior_version_context}
 ## Commit Message
 {commit_message}
 

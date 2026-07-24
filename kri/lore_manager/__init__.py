@@ -20,6 +20,12 @@ from .mbox import (
     split_commit_message_and_diff,
     strip_message_id,
 )
+from .version_discovery import (
+    CritiqueReplyPair,
+    PriorVersionFetcher,
+    discover_prior_version_thread_ids,
+    format_prior_version_context,
+)
 
 __all__ = [
     "LoreConfig",
@@ -37,4 +43,8 @@ __all__ = [
     "split_commit_message_and_diff",
     "files_from_diff",
     "strip_message_id",
+    "CritiqueReplyPair",
+    "PriorVersionFetcher",
+    "discover_prior_version_thread_ids",
+    "format_prior_version_context",
 ]

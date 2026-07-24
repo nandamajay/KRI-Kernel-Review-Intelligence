@@ -33,6 +33,7 @@ from kri.common.models import PatchSeries
 from kri.lore_manager import LoreConfig, LoreManagerImpl
 from kri.patch_manager import PatchManagerImpl
 from kri.repo_manager import ApplicabilityGate, RepoConfig, RepositoryManagerImpl
+from kri.lore_manager.version_discovery import PriorVersionFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,7 @@ def create_app(
                 series_r7_enabled=reducer_r7,
                 gate=gate,
                 baseline_ref=os.environ.get("KRI_BASELINE_REF", "HEAD"),
+                prior_version_fetcher=PriorVersionFetcher(lore, patches),
             )
             report = engine.review(series)
             return report.model_dump()

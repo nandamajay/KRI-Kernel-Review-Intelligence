@@ -27,6 +27,7 @@ from kri.series import (
     SeriesReviewContextBuilder,
     format_series_context,
 )
+from kri.lore_manager.version_discovery import format_prior_version_context
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +83,14 @@ class IntelligentReviewEngine:
         series_r7_enabled: bool = True,
         gate: Any | None = None,
         baseline_ref: str = "HEAD",
+        prior_version_fetcher: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
         self._static_analysis = static_analysis
         self._gate = gate
         self._baseline_ref = baseline_ref
+        self._prior_version_fetcher = prior_version_fetcher
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -197,17 +200,27 @@ class IntelligentReviewEngine:
         if series_ctx is not None:
             series_context_block = format_series_context(series_ctx, patch.patch_id)
 
+        # WP-S2A: prior-version maintainer feedback injection.
+        # Strategy C extension: apply_status is still NEVER injected (see below).
+        prior_version_block = ""
+        if self._prior_version_fetcher is not None:
+            try:
+                pairs = self._prior_version_fetcher.fetch(series)
+                prior_version_block = format_prior_version_context(pairs, patch.patch_id)
+            except Exception as _pv_exc:
+                logger.warning("prior_version_fetcher failed: %s", _pv_exc)
+
         # Run agents in parallel using threads
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = {
                 pool.submit(summarizer.analyze, patch, series): "summarizer",
                 pool.submit(
                     code_quality.review, patch, series, checkpatch_findings,
-                    series_context_block,
+                    series_context_block, prior_version_block,
                 ): "code_quality",
                 pool.submit(
                     subsystem.review, patch, series, checkpatch_findings,
-                    series_context_block,
+                    series_context_block, prior_version_block,
                 ): "subsystem",
             }
             for future in as_completed(futures):
