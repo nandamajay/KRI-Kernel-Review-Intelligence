@@ -30,6 +30,7 @@ from kri.series.models import (
     ReducerActionKind,
     SeriesReviewContext,
 )
+from kri.common.models import Severity as _Severity
 
 if TYPE_CHECKING:
     from kri.llm.models import InlineComment
@@ -58,6 +59,16 @@ _WARNING_CONFIDENCE_FLOOR = 0.7
 
 # Categories that may be merged across mismatched labels (readiness §6.4).
 _SOFT_CATEGORIES = frozenset({"convention", "style", "nit"})
+
+# Ordinal ranking for Severity. Python's lexicographic max() gives the wrong
+# result on these string values ("warning" > "blocker" > "info"). Use this map
+# with max(..., key=lambda s: _SEVERITY_RANK[s]) when computing max-severity
+# across a merge cluster.
+_SEVERITY_RANK: dict[_Severity, int] = {
+    _Severity.INFO: 0,
+    _Severity.WARNING: 1,
+    _Severity.BLOCKER: 2,
+}
 
 # R1 trigger phrases (readiness spec §5.R1). Match is case-insensitive
 # and substring-based. The list is intentionally NARROW: every phrase
@@ -601,7 +612,7 @@ class SeriesReducer:
             if len(cluster) < 2:
                 continue
             if key in buckets:
-                continue  # mixed bucket; merge side already handles it
+                continue  # mixed bucket: non-floored members merge; floored bystanders pass through unchanged
             ordered = sorted(cluster, key=lambda c: -c.confidence)
             actions.append(
                 ReducerAction(
@@ -625,7 +636,9 @@ class SeriesReducer:
         """Apply R4 merge and annotate actions. New list returned; inputs not mutated.
 
         MERGE: absorbed siblings are dropped; their snippet is appended to the
-        keeper's message as "Related remark: …".
+        keeper's message as "Related remark: …". The keeper's severity is
+        promoted to the max across the cluster (using _SEVERITY_RANK ordinal —
+        Python's lexicographic max() is incorrect for Severity str values).
 
         ANNOTATE: all cluster members remain; each gets series_prefix set to
         "[floored-cluster] " (no suppression). An existing series_prefix (e.g.
@@ -642,6 +655,7 @@ class SeriesReducer:
         ]
 
         keeper_updates: dict[str, list[str]] = {}
+        keeper_severity: dict[str, _Severity] = {}
         drop_refs: set[str] = set()
         for a in merge_actions:
             drop_refs.update(a.absorbed_refs)
@@ -649,10 +663,14 @@ class SeriesReducer:
             # same keeper accumulate their snippets instead of clobbering.
             keeper_updates.setdefault(a.finding_ref, [])
 
-        # Build ref → comment map once for absorbed-snippet lookup.
+        # Build ref → comment map once for absorbed-snippet and severity lookup.
         ref_to_cmt = {_comment_ref(c): c for c in comments}
 
         for a in merge_actions:
+            cluster_sevs: list[_Severity] = []
+            keeper_cmt = ref_to_cmt.get(a.finding_ref)
+            if keeper_cmt is not None:
+                cluster_sevs.append(keeper_cmt.severity)
             for absorbed_ref in a.absorbed_refs:
                 absorbed = ref_to_cmt.get(absorbed_ref)
                 if absorbed is None:
@@ -660,6 +678,11 @@ class SeriesReducer:
                 snippet = absorbed.upstream_comment or absorbed.message or ""
                 if snippet:
                     keeper_updates[a.finding_ref].append(snippet)
+                cluster_sevs.append(absorbed.severity)
+            if cluster_sevs:
+                keeper_severity[a.finding_ref] = max(
+                    cluster_sevs, key=lambda s: _SEVERITY_RANK[s]
+                )
 
         annotate_refs: set[str] = set()
         for a in annotate_actions:
@@ -671,9 +694,10 @@ class SeriesReducer:
             if ref in drop_refs:
                 continue
             snippets = keeper_updates.get(ref)
-            if snippets:
+            if snippets is not None:
                 tail = "".join(f"\nRelated remark: {s}" for s in snippets)
-                out.append(c.model_copy(update={"message": (c.message or "") + tail}))
+                sev = keeper_severity.get(ref, c.severity)
+                out.append(c.model_copy(update={"message": (c.message or "") + tail, "severity": sev}))
             elif ref in annotate_refs and not c.series_prefix:
                 out.append(c.model_copy(update={"series_prefix": "[floored-cluster] "}))
             else:

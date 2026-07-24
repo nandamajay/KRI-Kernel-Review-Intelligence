@@ -818,3 +818,136 @@ def test_R4_annotate_singleton_floored_bucket_no_action():
     assert len(annotate_actions) == 0
     assert len(result.comments) == 1
     assert result.comments[0].series_prefix == ""
+
+
+# ---------------------------------------------------------------------------
+# R4 severity-max (spec §6.4 mandatory guard)
+# ---------------------------------------------------------------------------
+
+
+def test_R4_keeper_severity_promoted_when_absorbed_has_higher_severity():
+    """The kept finding must carry the maximum severity across the merged
+    cluster. INFO keeper + WARNING-below-floor absorbed → keeper severity
+    becomes WARNING. The severity-collapse scenario (readiness review §3.2):
+    a high-confidence INFO nit absorbs a lower-confidence WARNING and drops
+    the WARNING severity signal without this guard."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    # INFO with higher confidence → wins keeper slot by confidence.
+    info_keeper = _cmt(
+        message="info nit", line_number=20, confidence=0.9, severity=Severity.INFO,
+    )
+    # WARNING below floor (0.65 < 0.7) → not floored, eligible for merge.
+    # Lower confidence → absorbed. Its severity must propagate to the keeper.
+    warning_absorbed = _cmt(
+        message="potential issue", line_number=22, confidence=0.3, severity=Severity.WARNING,
+    )
+    result = reducer.reduce(
+        patch_id="p1", comments=[info_keeper, warning_absorbed], series_ctx=ctx, mode="on"
+    )
+
+    merge_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    assert len(merge_actions) == 1
+    assert len(result.comments) == 1
+    kept = result.comments[0]
+    assert kept.severity == Severity.WARNING, (
+        f"severity must be promoted to WARNING; got {kept.severity!r}"
+    )
+    assert "potential issue" in kept.message
+
+
+def test_R4_keeper_severity_unchanged_when_already_highest():
+    """Keeper already holds the max severity — no change should occur."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    blocker_keeper = _cmt(
+        message="blocker", line_number=30, confidence=0.8, severity=Severity.BLOCKER,
+    )
+    # Safety floor — BLOCKER is floored, so it won't form a non-floored bucket.
+    # Use WARNING (non-floored, low confidence) as the absorbed sibling.
+    # WARNING is below 0.7 confidence → not floored.
+    info_absorbed = _cmt(
+        message="info", line_number=32, confidence=0.3, severity=Severity.INFO,
+    )
+    # BLOCKER is floored → it goes to floored_buckets, not buckets.
+    # So MERGE won't fire. We need both non-floored to test severity-max-unchanged.
+    # Use WARNING (not floored: 0.65 < 0.7) keeper + INFO absorbed.
+    warning_keeper = _cmt(
+        message="warning", line_number=30, confidence=0.65, severity=Severity.WARNING,
+    )
+    result = reducer.reduce(
+        patch_id="p1", comments=[warning_keeper, info_absorbed], series_ctx=ctx, mode="on"
+    )
+
+    merge_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    assert len(merge_actions) == 1
+    assert len(result.comments) == 1
+    kept = result.comments[0]
+    assert kept.severity == Severity.WARNING, (
+        f"severity must remain WARNING (already highest); got {kept.severity!r}"
+    )
+
+
+def test_R4_different_non_soft_categories_never_merge():
+    """Two comments at the same line bucket but different non-soft categories
+    must not be merged. The same-category constraint is enforced by the bucket
+    key (cat_class = category for non-soft), not by a post-hoc guard. This test
+    documents that invariant behaviorally so any key-flattening regression fails
+    immediately."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    bug = _cmt(
+        message="potential null deref", line_number=10, confidence=0.8, category="bug",
+    )
+    perf = _cmt(
+        message="unnecessary allocation", line_number=12, confidence=0.6, category="performance",
+    )
+    result = reducer.reduce(patch_id="p1", comments=[bug, perf], series_ctx=ctx, mode="on")
+
+    merge_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_MERGE]
+    assert len(merge_actions) == 0, (
+        "different non-soft categories must not share a bucket; got a MERGE action"
+    )
+    assert len(result.comments) == 2
+
+
+def test_R4_annotate_fires_in_shadow_mode_but_does_not_tag():
+    """In mode='shadow': ANNOTATE actions ARE emitted (audit trail) but
+    _apply_R4 is NOT called, so no series_prefix is set on any comment.
+    This locks the shadow-mode dispatch contract (reducer.py line ~263)."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    w1 = _cmt(message="warn1", line_number=10, confidence=0.8, severity=Severity.WARNING)
+    w2 = _cmt(message="warn2", line_number=12, confidence=0.75, severity=Severity.WARNING)
+    result = reducer.reduce(patch_id="p1", comments=[w1, w2], series_ctx=ctx, mode="shadow")
+
+    annotate_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE]
+    assert len(annotate_actions) == 1, "ANNOTATE action must be recorded in shadow mode"
+
+    for c in result.comments:
+        assert c.series_prefix == "", (
+            f"shadow mode must NOT apply annotations; got {c.series_prefix!r} on {c.message!r}"
+        )
+
+
+def test_R4_blocker_in_floored_cluster_is_tagged_not_dropped():
+    """A BLOCKER in a floored cluster must receive series_prefix — tagging
+    is permitted; suppression is not. Verify severity and message are intact."""
+    reducer = SeriesReducer()
+    ctx = _ctx()
+    blocker = _cmt(
+        message="null pointer deref", line_number=10, confidence=0.9, severity=Severity.BLOCKER,
+    )
+    warning = _cmt(
+        message="missing fence", line_number=14, confidence=0.85, severity=Severity.WARNING,
+    )
+    result = reducer.reduce(patch_id="p1", comments=[blocker, warning], series_ctx=ctx, mode="on")
+
+    annotate_actions = [a for a in result.actions if a.kind == ReducerActionKind.R4_LINE_BUCKET_ANNOTATE]
+    assert len(annotate_actions) == 1
+
+    assert len(result.comments) == 2, "no comment may be dropped"
+    blocker_out = next(c for c in result.comments if "null pointer" in c.message)
+    assert blocker_out.severity == Severity.BLOCKER, "BLOCKER severity must be preserved"
+    assert blocker_out.message == "null pointer deref", "message must not be mutated"
+    assert blocker_out.series_prefix == "[floored-cluster] "
