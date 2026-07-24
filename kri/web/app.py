@@ -671,7 +671,13 @@ function renderIntelligent(r){
   html+=`<p>${modeBadge('llm')}</p>`;
   if(r.metadata){
     const cpCount=r.metadata.checkpatch_finding_count||0;
-    html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s | <b>Checkpatch findings:</b> ${cpCount}</p>`;
+    let applySegment='';
+    if(r.metadata.apply_status_summary){
+      const s=r.metadata.apply_status_summary;
+      const icon=(s.conflict||0)>0?'❌':((s.degraded||0)>0?'⚠️':'✅');
+      applySegment=` | <b>Apply:</b> ${icon} ${s.clean??0} clean / ${s.conflict??0} conflict`;
+    }
+    html+=`<p><b>Model:</b> ${esc(r.metadata.llm_model||'')} | <b>Time:</b> ${r.metadata.processing_time_seconds||0}s | <b>Checkpatch findings:</b> ${cpCount}${applySegment}</p>`;
   }
   if(r.overall_assessment){
     html+=`<div style="background:#f0f7ff;border:1px solid #3498db;border-radius:4px;padding:0.8rem;margin:0.8rem 0">
@@ -684,6 +690,24 @@ function renderIntelligent(r){
       html+=`<p><b>Summary:</b> ${esc(pr.summary.what_it_does)}</p>`;
       if(pr.summary.change_type)html+=`<p><b>Type:</b> ${esc(pr.summary.change_type)} | <b>Subsystem:</b> ${esc(pr.summary.subsystem)}</p>`;
       if(pr.summary.risk_areas&&pr.summary.risk_areas.length)html+=`<p><b>Risks:</b> ${pr.summary.risk_areas.map(esc).join(', ')}</p>`;
+    }
+    const as_=(pr.metadata&&pr.metadata.apply_status)||null;
+    if(as_){
+      const ref_=esc(as_.baseline_ref||'HEAD');
+      const commit_=esc((as_.baseline_commit||'').slice(0,12));
+      if(as_.degraded){
+        html+=`<p style="color:#e67e22;font-weight:600">⚠️ Apply check unavailable — ${esc(as_.degraded_reason||'')}</p>`;
+      }else if(as_.ok){
+        html+=`<p style="color:#27ae60;font-weight:600">✅ Applies cleanly at ${ref_}${commit_?' ('+commit_+')':''}</p>`;
+      }else{
+        const n=(as_.conflicts||[]).length;
+        html+=`<details open style="margin:0.5rem 0"><summary style="color:#e74c3c;font-weight:600">❌ Does not apply at ${ref_} — ${n} conflict(s)</summary>`;
+        for(const c of (as_.conflicts||[])){
+          const detail_=esc((c.detail||'').slice(0,200));
+          html+=`<pre style="margin:0.4rem 0;font-size:0.82rem">${detail_}</pre>`;
+        }
+        html+=`</details>`;
+      }
     }
     const cpFindings=(pr.metadata&&pr.metadata.checkpatch_findings)||[];
     if(cpFindings.length){

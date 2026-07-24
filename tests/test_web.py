@@ -74,3 +74,61 @@ def test_get_series_and_reviews_roundtrip(client: TestClient) -> None:
 
 def test_get_missing_series_404(client: TestClient) -> None:
     assert client.get("/api/series/nope@nowhere").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# TB91: apply_status UI card rendering (static JS template assertions)
+# ---------------------------------------------------------------------------
+
+def test_TB91_index_contains_apply_status_js(client: TestClient) -> None:
+    """The index page must embed the apply_status rendering JS for both locations."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "apply_status_summary" in r.text
+    assert "apply_status" in r.text
+    assert "Applies cleanly at" in r.text
+
+
+def test_TB91_summary_strip_absent_when_no_apply_status_summary(
+    client: TestClient,
+) -> None:
+    """apply_status_summary guard must be present in JS (data absent → no Apply: strip)."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "apply_status_summary" in r.text
+    assert "applySegment" in r.text
+
+
+def test_TB91_summary_strip_shows_apply_counts(
+    client: TestClient,
+) -> None:
+    """apply_status_summary present → Apply: N clean / M conflict in JS template."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "s.clean" in r.text
+    assert "s.conflict" in r.text
+    assert "Apply:" in r.text
+
+
+def test_TB91_patch_clean_badge_js_present(client: TestClient) -> None:
+    """✅ clean badge template must be embedded in the page JS."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Applies cleanly at" in r.text
+    assert "as_" in r.text
+
+
+def test_TB91_patch_conflict_badge_js_present(client: TestClient) -> None:
+    """❌ conflict badge template must be embedded (details open) in the page JS."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Does not apply at" in r.text
+    assert "details open" in r.text
+
+
+def test_TB91_patch_degraded_badge_js_present(client: TestClient) -> None:
+    """⚠️ degraded badge template must be embedded in the page JS."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Apply check unavailable" in r.text
+    assert "as_.degraded" in r.text
