@@ -153,9 +153,15 @@ class RepositoryManagerImpl:
     def apply_patch(self, series: Any) -> ApplyResult:
         """Apply a :class:`~kri.common.models.PatchSeries` to the working tree.
 
-        Uses ``git apply --check`` first (dry run) then ``git apply`` per patch, in
-        series order. On any reject it records a structured conflict entry and stops
-        (kernel series are ordered and dependent). Never raises on a patch reject."""
+        Resets the working tree to HEAD first so consecutive calls are idempotent —
+        dirty state from a prior run does not corrupt the next apply.  Uses
+        ``git apply --check`` (dry run) then ``git apply`` per patch, in series order.
+        On any reject it records a structured conflict entry and stops. Never raises."""
+        try:
+            self._reset_tree()
+        except Exception as exc:  # noqa: BLE001
+            return ApplyResult(ok=False, message=f"tree reset failed: {exc}")
+
         patches = getattr(series, "patches", None)
         if patches is None:
             return ApplyResult(ok=False, message="series has no patches")
@@ -211,16 +217,25 @@ class RepositoryManagerImpl:
             message="applied cleanly" if ok else f"{len(failed)} patch(es) failed to apply",
         )
 
+    def _reset_tree(self) -> None:
+        """Restore the working tree to HEAD.
+
+        Called at the start of apply_patch() so consecutive calls on the same
+        Repo object do not accumulate dirty state from prior runs."""
+        self._repo.git.checkout("--", ".")
+        self._repo.git.clean("-fd")
+
     def _git_apply(self, diff_text: str, check_only: bool) -> _ProcResult:
         """Run ``git apply`` on a diff via a temp file. Returns a structured result."""
         if not diff_text.endswith("\n"):
             diff_text += "\n"
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".diff", delete=False, dir=self._cfg.repo_path
-        ) as fh:
-            fh.write(diff_text)
-            tmp = fh.name
+        tmp: str | None = None
         try:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".diff", delete=False, dir=self._cfg.repo_path
+            ) as fh:
+                fh.write(diff_text)
+                tmp = fh.name
             args = ["apply", "--verbose"]
             if check_only:
                 args.append("--check")
@@ -231,7 +246,8 @@ class RepositoryManagerImpl:
             except GitCommandError as exc:
                 return _ProcResult(ok=False, stdout=str(exc.stdout), stderr=str(exc.stderr))
         finally:
-            Path(tmp).unlink(missing_ok=True)
+            if tmp:
+                Path(tmp).unlink(missing_ok=True)
 
     # -- interface: blame ----------------------------------------------------
     def blame(self, file: str, line: int) -> list[dict[str, Any]]:

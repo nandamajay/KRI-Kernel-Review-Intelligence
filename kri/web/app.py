@@ -19,6 +19,7 @@ domain. Network I/O happens only inside the Lore Manager.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections import OrderedDict
 from pathlib import Path
@@ -31,6 +32,9 @@ from pydantic import BaseModel
 from kri.common.models import PatchSeries
 from kri.lore_manager import LoreConfig, LoreManagerImpl
 from kri.patch_manager import PatchManagerImpl
+from kri.repo_manager import RepoConfig, RepositoryManagerImpl
+
+logger = logging.getLogger(__name__)
 
 
 class SubmitRequest(BaseModel):
@@ -336,8 +340,31 @@ def create_app(
                 series_r6_enabled=reducer_r6,
                 series_r7_enabled=reducer_r7,
             )
+
+            # Blueprint Sec. 21.1: attempt apply at series level BEFORE entering
+            # ThreadPoolExecutor — apply_patch() is not thread-safe on the same Repo.
+            apply_status: dict[str, Any] = {"status": "skipped"}
+            if kernel_path:
+                try:
+                    rm = RepositoryManagerImpl(RepoConfig(kernel_path))
+                    result = rm.apply_patch(series)
+                    apply_status = {
+                        "status": "ok" if result.ok else "failed",
+                        "applied": result.applied,
+                        "failed": result.failed,
+                        "conflicts": result.conflicts,
+                        "message": result.message,
+                    }
+                except ValueError as exc:
+                    apply_status = {"status": "error", "message": str(exc)}
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("repo_manager apply_patch failed: %s", exc)
+                    apply_status = {"status": "error", "message": str(exc)}
+
             report = engine.review(series)
-            return report.model_dump()
+            result_dict = report.model_dump()
+            result_dict.setdefault("metadata", {})["apply_status"] = apply_status
+            return result_dict
         except LLMOfflineError as e:
             raise HTTPException(
                 status_code=503,

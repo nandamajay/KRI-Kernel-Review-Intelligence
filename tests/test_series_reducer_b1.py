@@ -466,11 +466,11 @@ def test_SM11_reducer_invoked_once_per_patch_with_expected_args():
     for c in spy.calls:
         assert c["mode"] == "off"
         assert c["series_ctx_is_multi"] is True
-        # Default flag geometry: R5/R6/R7 disabled per readiness §6.1.
+        # Default flag geometry: R5/R6/R7 enabled by default (shadow mode ready).
         assert c["flags"] == {
-            "series_r5_enabled": False,
-            "series_r6_enabled": False,
-            "series_r7_enabled": False,
+            "series_r5_enabled": True,
+            "series_r6_enabled": True,
+            "series_r7_enabled": True,
         }
 
 
@@ -585,7 +585,7 @@ def test_reducer_off_mode_is_default_on_engine_construction():
     engine = IntelligentReviewEngine(client=_fake_client_returning([]))
     assert engine._series_reducer_mode == "off"
     assert engine._series_reducer_flags == {
-        "series_r5_enabled": False,
-        "series_r6_enabled": False,
-        "series_r7_enabled": False,
+        "series_r5_enabled": True,
+        "series_r6_enabled": True,
+        "series_r7_enabled": True,
     }
