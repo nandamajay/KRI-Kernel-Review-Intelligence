@@ -42,6 +42,10 @@ asoc = "kri.packages.asoc.plugin:AsocDomainKnowledgePackage"
 where = ["."]
 include = ["kri*"]
 
+[tool.setuptools.package-data]
+"kri.governance" = ["*.yaml"]
+"kri.packages.asoc" = ["*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

@@ -20,6 +20,7 @@ from kri.llm.models import (
 )
 from kri.llm.prompts import AGGREGATE_REVIEW_PROMPT, SYSTEM_KERNEL_REVIEWER, build_domain_context
 from kri.llm.sanitize import strip_trailers
+from kri.governance import ConstitutionalRules, load_rules, log_governance_warnings
 from kri.series import (
     SeriesReducer,
     SeriesReviewContext,
@@ -63,6 +64,11 @@ class IntelligentReviewEngine:
             "series_r6_enabled": series_r6_enabled,
             "series_r7_enabled": series_r7_enabled,
         }
+        self._governance_rules: ConstitutionalRules = ConstitutionalRules([])
+        try:
+            self._governance_rules = load_rules()
+        except Exception as _gov_exc:
+            logger.warning("Governance rules could not be loaded: %s", _gov_exc)
         self._domain_context = ""
         if dkp:
             rules = dkp.rules() if hasattr(dkp, "rules") else None
