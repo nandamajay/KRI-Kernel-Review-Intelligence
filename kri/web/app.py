@@ -313,15 +313,17 @@ def create_app(
 
         # Load DKP for domain context.
         dkp = None
+        review_km: KnowledgeManagerImpl | None = None
         if req.domain:
             try:
-                km = KnowledgeManagerImpl()
-                dkp = km.load_dkp(req.domain)
+                review_km = KnowledgeManagerImpl()
+                dkp = review_km.load_dkp(req.domain)
             except Exception:  # noqa: BLE001
                 pass
 
         # Run LLM review.
         try:
+            from kri.evidence_engine.engine import EvidenceEngineImpl
             from kri.static_analysis import StaticAnalysisConfig, StaticAnalysisManagerImpl
 
             llm_config = LLMConfig()
@@ -338,6 +340,11 @@ def create_app(
                     gate = ApplicabilityGate(rm)
                 except ValueError:
                     pass  # kernel_path not a valid repo; gate disabled
+            # WP4-B: wire evidence engine — constructed only when a KnowledgeManager
+            # is available (domain was set); otherwise evidence gate is disabled.
+            evidence_engine = None
+            if review_km is not None:
+                evidence_engine = EvidenceEngineImpl(review_km)
             engine = IntelligentReviewEngine(
                 client=client,
                 dkp=dkp,
@@ -349,6 +356,8 @@ def create_app(
                 gate=gate,
                 baseline_ref=os.environ.get("KRI_BASELINE_REF", "HEAD"),
                 prior_version_fetcher=PriorVersionFetcher(lore, patches),
+                evidence_engine=evidence_engine,
+                knowledge_manager=review_km,
             )
             report = engine.review(series)
             return report.model_dump()

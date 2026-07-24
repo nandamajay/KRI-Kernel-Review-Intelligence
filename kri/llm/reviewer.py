@@ -14,6 +14,7 @@ from kri.common.models import (
     Patch,
     PatchSeries,
     ReasoningLayer,
+    SeriesContext,
     Severity,
 )
 from kri.llm.agents import CodeQualityAgent, PatchSummarizerAgent, SubsystemExpertAgent
@@ -36,6 +37,7 @@ from kri.series import (
     format_series_context,
 )
 from kri.lore_manager.version_discovery import format_prior_version_context
+from kri.review_engine.series_context import build_series_context
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +185,8 @@ class IntelligentReviewEngine:
         gate: Any | None = None,
         baseline_ref: str = "HEAD",
         prior_version_fetcher: Any | None = None,
+        evidence_engine: Any | None = None,
+        knowledge_manager: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
@@ -190,6 +194,9 @@ class IntelligentReviewEngine:
         self._gate = gate
         self._baseline_ref = baseline_ref
         self._prior_version_fetcher = prior_version_fetcher
+        # WP4-B: evidence engine wiring (None = evidence gate disabled, mode-off safe)
+        self._evidence_engine = evidence_engine
+        self._knowledge_manager = knowledge_manager
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -352,6 +359,19 @@ class IntelligentReviewEngine:
                 lines = extract_hunk_context(diff_lines, comment.file_path, comment.line_number)
                 comment.hunk_context = "\n".join(lines)
 
+        # WP4-B: evidence gate — convert comments to Decisions, gather evidence,
+        # apply evidence_status, suppress evidence_missing (non-safety-floor) comments.
+        # Guard: only active when evidence_engine is wired in; None = mode-off safe.
+        if self._evidence_engine is not None:
+            series_ctx_common: SeriesContext | None = None
+            try:
+                series_ctx_common = build_series_context(series)
+            except Exception as _sc_exc:
+                logger.warning("build_series_context failed: %s", _sc_exc)
+            all_comments = self._apply_evidence_gate(
+                all_comments, patch, series, series_ctx_common
+            )
+
         # WP-S1B Step B1: series reducer runs AFTER _merge_comments + hunk_context
         # back-fill, BEFORE PatchReview assembly (authoritative ordering per
         # readiness review §7.B1). mode="off" is a pure no-op — the reducer
@@ -413,6 +433,56 @@ class IntelligentReviewEngine:
             lore_reply=lore_reply,
             metadata=pr_metadata,
         )
+
+    def _apply_evidence_gate(
+        self,
+        comments: list[InlineComment],
+        patch: Patch,
+        series: PatchSeries,
+        series_ctx_common: SeriesContext | None,
+    ) -> list[InlineComment]:
+        """Apply the evidence gate to a list of merged comments.
+
+        For each comment, converts it to a Decision, calls evidence_engine.gather(),
+        and sets comment.evidence_status accordingly.
+
+        Safety floor (§29 / §35): comments with severity in (BLOCKER, WARNING) AND
+        confidence >= 0.70 are NEVER suppressed, regardless of evidence status.
+        They receive evidence_status="safety_floored" when evidence is missing.
+
+        Returns: filtered list (evidence_missing comments suppressed unless safety floor).
+        """
+        result: list[InlineComment] = []
+        for comment in comments:
+            decision = _llm_comment_to_decision(comment, patch, series, self._dkp)
+            try:
+                evidence_graph = self._evidence_engine.gather(
+                    decision, series_context=series_ctx_common
+                )
+            except Exception as _ev_exc:
+                logger.warning("evidence gather failed for %s: %s", decision.decision_id, _ev_exc)
+                evidence_graph = EvidenceGraph(comment_id=decision.decision_id)
+
+            if evidence_graph.has_verified_evidence():
+                # Distinguish rule-backed vs generic support.
+                if evidence_graph.subsystem_rule is not None:
+                    comment.evidence_status = "rule_backed"
+                else:
+                    comment.evidence_status = "supported"
+                result.append(comment)
+            else:
+                # No verified evidence.
+                is_safety_floor = (
+                    comment.severity in (Severity.BLOCKER, Severity.WARNING)
+                    and comment.confidence >= 0.70
+                )
+                if is_safety_floor:
+                    comment.evidence_status = "safety_floored"
+                    result.append(comment)
+                else:
+                    comment.evidence_status = "evidence_missing"
+                    # evidence_missing non-floor comments are suppressed (not appended)
+        return result
 
     def _merge_comments(self, outputs: list[AgentReviewOutput]) -> list[InlineComment]:
         """Merge comments from all agents, deduplicate by location+category."""
