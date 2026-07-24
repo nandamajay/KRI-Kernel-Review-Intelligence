@@ -605,3 +605,46 @@ def test_R1_fires_when_same_symbol_in_both_compatibles_and_files_added():
         f"Got {len(r1_actions)} R1 actions."
     )
     assert len(result.comments) == 0
+
+
+# ---------------------------------------------------------------------------
+# R1 word-boundary guard (readiness spec §7.B5)
+# ---------------------------------------------------------------------------
+
+
+def test_R1_word_boundary_fires_on_exact_token_match():
+    """R1 must fire when the declared symbol appears as a whole token."""
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"foo,bar": "p2"})
+    cmt = _cmt(
+        message="foo,bar binding is missing from this patch",
+        category="documentation",
+        confidence=0.6,
+    )
+    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on")
+
+    r1 = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
+    assert len(r1) == 1, "R1 must fire on exact word-boundary symbol match"
+
+
+def test_R1_word_boundary_does_not_fire_on_partial_token():
+    """R1 must NOT fire when the declared symbol is only a substring of
+    a longer token.  'foo,bar' declared; comment contains 'foo,bar-extended'
+    — the declared symbol is a prefix of a different compatible and must
+    not suppress a finding about foo,bar-extended."""
+    reducer = SeriesReducer()
+    ctx = _ctx(compatibles={"foo,bar": "p2"})
+    # 'foo,bar' appears only as a prefix inside 'foo,bar-extended', never as
+    # a standalone token.  R1 must NOT fire.
+    cmt = _cmt(
+        message="foo,bar-extended binding is missing from this series",
+        category="documentation",
+        confidence=0.6,
+    )
+    result = reducer.reduce(patch_id="p1", comments=[cmt], series_ctx=ctx, mode="on")
+
+    r1 = [a for a in result.actions if a.kind == ReducerActionKind.R1_DECLARED_SYMBOL_SUPPRESS]
+    assert len(r1) == 0, (
+        "R1 must not fire when declared symbol is only a substring of a longer token; "
+        f"got {len(r1)} action(s)"
+    )

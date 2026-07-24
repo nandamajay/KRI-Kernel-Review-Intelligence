@@ -22,6 +22,7 @@ byte-identical to the pre-WP-S1B post-``_merge_comments`` path.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -415,7 +416,10 @@ class SeriesReducer:
                 key=len,
                 reverse=True,
             ):
-                if sym and sym.lower() in haystack:
+                if sym and re.search(
+                    r"(?<![a-z0-9,_\-])" + re.escape(sym.lower()) + r"(?![a-z0-9,_\-])",
+                    haystack,
+                ):
                     matched_symbol = sym
                     declaring_patch = (
                         registry.compatibles.get(sym)
@@ -496,7 +500,10 @@ class SeriesReducer:
                 key=len,
                 reverse=True,
             ):
-                if sym and sym.lower() in haystack:
+                if sym and re.search(
+                    r"(?<![a-z0-9,_\-])" + re.escape(sym.lower()) + r"(?![a-z0-9,_\-])",
+                    haystack,
+                ):
                     matched_symbol = sym
                     declaring_patch = (
                         registry.compatibles.get(sym)
