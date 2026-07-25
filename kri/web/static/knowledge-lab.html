@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KRI — Knowledge Lab</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f5f6fa;color:#1a1a1a;padding:1.5rem}
+h1{color:#2c3e50;font-size:1.4rem;margin-bottom:0.25rem}
+.subtitle{color:#666;font-size:0.85rem;margin-bottom:1.5rem}
+.stats-bar{display:flex;gap:1.5rem;background:#fff;border:1px solid #dde;border-radius:6px;padding:0.75rem 1rem;margin-bottom:1.5rem;flex-wrap:wrap}
+.stat{text-align:center}
+.stat-n{font-size:1.5rem;font-weight:700;color:#2980b9}
+.stat-l{font-size:0.75rem;color:#888;text-transform:uppercase;letter-spacing:0.04em}
+h2{font-size:1rem;font-weight:600;color:#34495e;margin:1.2rem 0 0.5rem}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dde;border-radius:6px;overflow:hidden;font-size:0.85rem}
+th{background:#ecf0f4;text-align:left;padding:0.5rem 0.75rem;font-size:0.78rem;text-transform:uppercase;letter-spacing:0.04em;color:#555;border-bottom:1px solid #dde}
+td{padding:0.45rem 0.75rem;border-bottom:1px solid #f0f0f5;vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8f9ff}
+.badge{display:inline-block;padding:0.15rem 0.45rem;border-radius:3px;font-size:0.72rem;font-weight:600;letter-spacing:0.02em}
+.badge-ack{background:#d5f0e0;color:#1a7a42}
+.badge-nack{background:#fde8e8;color:#b52626}
+.badge-disc{background:#eef0f5;color:#555}
+.badge-dapm,.badge-dai,.badge-driver{background:#e8f0fd;color:#1a4a9e}
+.badge-perf,.badge-lock{background:#fef5e0;color:#7a4f00}
+.badge-other{background:#f0eef5;color:#5a4070}
+a{color:#2980b9;text-decoration:none}
+a:hover{text-decoration:underline}
+.err{color:#c0392b;padding:1rem;background:#fdecea;border-radius:4px;font-size:0.85rem}
+.empty{color:#888;font-size:0.85rem;padding:1rem}
+#status{color:#888;font-size:0.8rem;margin-bottom:0.75rem}
+.section{margin-bottom:2rem}
+</style>
+</head>
+<body>
+<h1>KRI — Knowledge Lab</h1>
+<p class="subtitle">Source knowledge + lore review explorer &nbsp;·&nbsp; read-only</p>
+<div id="stats-bar" class="stats-bar">
+  <div class="stat"><div class="stat-n" id="s-nodes">—</div><div class="stat-l">Lab Nodes</div></div>
+  <div class="stat"><div class="stat-n" id="s-files">—</div><div class="stat-l">Files</div></div>
+  <div class="stat"><div class="stat-n" id="s-reviews">—</div><div class="stat-l">Lore Reviews</div></div>
+  <div class="stat"><div class="stat-n" id="s-rules">—</div><div class="stat-l">Rules</div></div>
+  <div class="stat"><div class="stat-n" id="s-sha" style="font-size:0.8rem;font-family:monospace">—</div><div class="stat-l">Kernel SHA</div></div>
+</div>
+<p id="status">Loading…</p>
+
+<div class="section">
+  <h2>Rules</h2>
+  <table id="rules-table">
+    <thead><tr>
+      <th>Rule ID</th><th>Category</th><th>Type</th><th>Description</th><th>Enforcement</th>
+    </tr></thead>
+    <tbody id="rules-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Lore Review Explorer</h2>
+  <table id="reviews-table">
+    <thead><tr>
+      <th>Series</th><th>Claim</th><th>Type</th><th>Status</th><th>Reviewer Text</th><th>Source</th>
+    </tr></thead>
+    <tbody id="reviews-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+"use strict";
+const CLAIM_CLASS = {
+  maintainer_ack:"badge-ack", maintainer_nack:"badge-nack",
+  dapm:"badge-dapm", dai:"badge-dai", audio_driver:"badge-driver",
+  jack_detection:"badge-driver", dpcm:"badge-dapm", qcom_lpass:"badge-driver",
+  audio_lifecycle:"badge-driver", dt_binding:"badge-other",
+  locking:"badge-lock", memory_safety:"badge-nack", performance:"badge-perf",
+  review_discussion:"badge-disc",
+};
+function badge(text, cls){ return `<span class="badge ${cls||'badge-other'}">${text}</span>`; }
+function esc(s){ const d=document.createElement('div');d.textContent=s||'';return d.innerHTML; }
+
+async function loadStats(){
+  try {
+    const r = await fetch('/api/knowledge/lab/stats');
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    document.getElementById('s-nodes').textContent = d.node_count ?? 0;
+    document.getElementById('s-files').textContent = d.file_count ?? 0;
+    document.getElementById('s-reviews').textContent = d.review_entry_count ?? 0;
+    document.getElementById('s-sha').textContent = (d.source_git_sha||'n/a').slice(0,10);
+  } catch(e){ document.getElementById('s-nodes').textContent='err'; }
+}
+
+async function loadRules(){
+  const tbody = document.getElementById('rules-body');
+  try {
+    const r = await fetch('/api/knowledge/lab/rules');
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    const rows = d.rules || [];
+    if (!rows.length){ tbody.innerHTML='<tr><td colspan="5" class="empty">No rules loaded.</td></tr>'; return; }
+    document.getElementById('s-rules').textContent = rows.length;
+    tbody.innerHTML = rows.map(row => `<tr>
+      <td><code>${esc(row.rule_id)}</code></td>
+      <td>${esc(row.category)}</td>
+      <td>${esc(row.rule_type)}</td>
+      <td>${esc(row.description)}</td>
+      <td>${row.enforcement_rate != null ? (row.enforcement_rate*100).toFixed(0)+'%' : '—'}</td>
+    </tr>`).join('');
+  } catch(e){ tbody.innerHTML=`<tr><td colspan="5" class="err">Failed to load rules: ${esc(e.message)}</td></tr>`; }
+}
+
+async function loadReviews(){
+  const tbody = document.getElementById('reviews-body');
+  try {
+    const r = await fetch('/api/knowledge/lab/reviews');
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    const entries = d.entries || [];
+    if (!entries.length){ tbody.innerHTML='<tr><td colspan="6" class="empty">No review entries.</td></tr>'; return; }
+    tbody.innerHTML = entries.map(e => {
+      const cls = CLAIM_CLASS[e.extracted_claim] || 'badge-other';
+      const src = e.source_url
+        ? `<a href="${esc(e.source_url)}" target="_blank" rel="noopener">lore</a>`
+        : '—';
+      return `<tr>
+        <td><code>${esc((e.series_id||'').slice(0,16))}</code></td>
+        <td>${badge(esc(e.extracted_claim), cls)}</td>
+        <td>${esc(e.evidence_type)}</td>
+        <td>${esc(e.validation_status)}</td>
+        <td>${esc((e.reviewer_text||'').slice(0,120))}</td>
+        <td>${src}</td>
+      </tr>`;
+    }).join('');
+  } catch(e){ tbody.innerHTML=`<tr><td colspan="6" class="err">Failed to load reviews: ${esc(e.message)}</td></tr>`; }
+}
+
+(async function init(){
+  await Promise.all([loadStats(), loadRules(), loadReviews()]);
+  document.getElementById('status').textContent = '';
+})();
+</script>
+</body>
+</html>

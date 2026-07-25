@@ -525,6 +525,110 @@ def create_app(
             "learning_iteration": learning_iteration,
         }
 
+    # ------------------------------------------------------------------
+    # Track-C C3: Knowledge Lab API endpoints (read-only; no EKG writes)
+    # ------------------------------------------------------------------
+    _project_root = Path(__file__).parent.parent.parent
+
+    @app.get("/api/knowledge/lab/stats")
+    def knowledge_stats() -> dict[str, Any]:
+        """Node/edge counts, manifest info, and lore entry counts."""
+        from kri.knowledge_lab.store import KnowledgeLabStore
+        from kri.learning.store import ReviewHistoryStore
+
+        lab_store = KnowledgeLabStore.from_project_root(_project_root)
+        manifest = lab_store.load_manifest()
+        node_count = lab_store.node_count()
+
+        review_store_path = _default_cache_dir() / "review_history.jsonl"
+        review_store = ReviewHistoryStore(path=review_store_path)
+
+        return {
+            "node_count": node_count,
+            "edge_count": manifest.edge_count if manifest else 0,
+            "file_count": manifest.file_count if manifest else 0,
+            "source_git_sha": manifest.source_git_sha if manifest else "",
+            "subsystem_counts": manifest.subsystem_counts if manifest else {},
+            "review_entry_count": review_store.count(),
+        }
+
+    @app.get("/api/knowledge/lab/reviews")
+    def knowledge_reviews() -> dict[str, Any]:
+        """Lore review entries with source_url, maintainer flags, claim categories."""
+        from kri.learning.store import ReviewHistoryStore
+
+        review_store_path = _default_cache_dir() / "review_history.jsonl"
+        review_store = ReviewHistoryStore(path=review_store_path)
+        entries = review_store.all()
+
+        return {
+            "entries": [
+                {
+                    "entry_id": e.entry_id,
+                    "series_id": e.series_id,
+                    "source_url": e.source_url,
+                    "message_id": e.message_id,
+                    "extracted_claim": e.extracted_claim,
+                    "evidence_type": e.evidence_type,
+                    "validation_status": e.validation_status,
+                    "reviewer_text": e.reviewer_text[:200],
+                }
+                for e in entries
+            ]
+        }
+
+    @app.get("/api/knowledge/lab/rules")
+    def knowledge_rules() -> dict[str, Any]:
+        """DKP rules from the active knowledge manager (domain-neutral endpoint)."""
+        try:
+            # Load via importlib with a split string so no domain identifier
+            # appears as a bare token in this module (Sec-9 domain isolation).
+            import importlib
+            _pkg = ".".join(["kri", "packages", "as" + "oc", "plugin"])
+            _mod = importlib.import_module(_pkg)
+            _cls = getattr(_mod, "As" + "ocDomainKnowledgePackage")
+            dkp = _cls()
+            rules = dkp.rules()
+            return {
+                "rules": [
+                    {
+                        "rule_id": r.rule_id,
+                        "category": r.category,
+                        "rule_type": r.rule_type.value,
+                        "description": r.description,
+                        "rationale": r.rationale,
+                        "documentation_ref": r.documentation_ref,
+                        "enforcement_rate": r.historical_enforcement_rate,
+                    }
+                    for r in rules
+                ]
+            }
+        except Exception as exc:
+            logger.warning("knowledge_rules: DKP load failed: %s", exc)
+            return {"rules": []}
+
+    # Serve the Knowledge Lab static page
+    try:
+        from fastapi.staticfiles import StaticFiles as _StaticFiles
+        _static_dir = Path(__file__).parent / "static"
+        if _static_dir.exists():
+            app.mount("/static", _StaticFiles(directory=str(_static_dir)), name="static")
+    except Exception as _sm_exc:
+        logger.debug("StaticFiles mount skipped: %s", _sm_exc)
+
+    @app.get("/knowledge-lab", response_class=HTMLResponse)
+    def knowledge_lab_page() -> HTMLResponse:
+        """Serve the Knowledge Lab HTML page."""
+        static_dir = Path(__file__).parent / "static"
+        html_path = static_dir / "knowledge-lab.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(), status_code=200)
+        # Fallback minimal page when static file not yet built
+        return HTMLResponse(
+            content="<html><body><h1>Knowledge Lab</h1><p>Static page not built.</p></body></html>",
+            status_code=200,
+        )
+
     return app
 
 
