@@ -88,6 +88,8 @@ class CFMCalibrationReport(BaseModel):
         "CFM_SHADOW_STAYS"
     )
     gate_criteria_status: dict[str, bool] = Field(default_factory=dict)
+    # Track-B.6: per-claim REVIEW_HISTORY factor distribution (claim → factor score)
+    review_history_distribution: dict[str, float] = Field(default_factory=dict)
 
 
 __all__ = [

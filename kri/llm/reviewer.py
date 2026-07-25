@@ -392,7 +392,9 @@ class IntelligentReviewEngine:
             except Exception as _rhs_exc:
                 logger.warning("B5: review_history_store.summarise_by_series_ids() failed: %s", _rhs_exc)
 
-        # WP4-K: Track-B CFM shadow calibration (shadow mode, no gate effect)
+        # WP4-K / Track-B.6: CFM shadow calibration (shadow mode, no gate effect).
+        # Pass (comment_id, llm_confidence, claim_category) triples so the
+        # calibrator can use claim-based evidence selection, matching the live path.
         cfm_calibration: dict | None = None
         if self._cfm_calibrator is not None:
             try:
@@ -403,6 +405,7 @@ class IntelligentReviewEngine:
                             f"{c.file_path}:{c.line_number}:{c.message[:80]}".encode()
                         ).hexdigest()[:16],
                         c.confidence,
+                        c.category,  # Track-B.6: claim category for per-claim evidence selection
                     )
                     for pr in patch_reviews
                     for c in pr.inline_comments

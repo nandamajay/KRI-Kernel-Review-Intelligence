@@ -117,12 +117,16 @@ class CFMCalibrator:
 
     def calibrate(
         self,
-        llm_comments: list[tuple[str, float]],
+        llm_comments: list[tuple[str, float]] | list[tuple[str, float, str]],
     ) -> CFMCalibrationReport:
         """Run shadow calibration.
 
         Args:
-            llm_comments: list of (comment_id, llm_confidence) pairs from KRI reviews.
+            llm_comments: list of (comment_id, llm_confidence) pairs,
+                OR (comment_id, llm_confidence, claim_category) triples.
+                When claim_category is present (Track-B.6), evidence selection
+                uses store.by_claim(category) — matching the live review path.
+                When absent (Track-B / backward-compat), falls back to all_entries.
 
         Returns:
             CFMCalibrationReport with shadow scores + comparison metrics.
@@ -150,13 +154,28 @@ class CFMCalibrator:
                 gate_criteria_status=gate_empty,
             )
 
+        # Detect whether claim categories were provided (Track-B.6 path)
+        has_claims = len(llm_comments) > 0 and len(llm_comments[0]) == 3
+
         cfm_scores: list[float] = []
         llm_scores: list[float] = []
-        high_cfm_low_llm: int = 0  # FP estimate numerator
+        high_cfm_low_llm: int = 0
 
-        for comment_id, llm_conf in llm_comments:
-            # Use all available entries as calibration context
-            eg = _build_evidence_graph_for_calibration(comment_id, all_entries)
+        for row in llm_comments:
+            comment_id: str = row[0]
+            llm_conf: float = row[1]
+            claim_category: str | None = row[2] if has_claims else None  # type: ignore[index]
+
+            # Track-B.6: use claim-based evidence when category is available.
+            # Mirrors the live review path (_enrich_with_lore_history).
+            if claim_category and claim_category != "review_discussion":
+                claim_entries = self._store.by_claim(claim_category)
+                entries_for_comment = claim_entries if claim_entries else []
+            else:
+                # Backward-compat: fall back to all entries (Track-B behaviour)
+                entries_for_comment = all_entries
+
+            eg = _build_evidence_graph_for_calibration(comment_id, entries_for_comment)
 
             # Build a minimal Decision for the confidence engine
             decision = Decision(
@@ -175,7 +194,6 @@ class CFMCalibrator:
             cfm_scores.append(cfm_score)
             llm_scores.append(llm_conf)
 
-            # FP estimate: CFM high (>0.7) but LLM low (<0.35)
             if cfm_score > 0.7 and llm_conf < 0.35:
                 high_cfm_low_llm += 1
 
@@ -186,12 +204,19 @@ class CFMCalibrator:
 
         # Factor contribution summary (average across all calibrations)
         factor_contribs: dict[str, float] = {}
+        rh_distribution: dict[str, float] = {}  # Track-B.6: per-claim REVIEW_HISTORY distribution
         if cfm_scores:
-            # Compute average factor scores across all scored comments
             factor_totals: dict[str, float] = {}
             factor_count = 0
-            for cmt_id, llm_conf in llm_comments:
-                eg = _build_evidence_graph_for_calibration(cmt_id, all_entries)
+            for row in llm_comments:
+                cmt_id: str = row[0]
+                claim_cat: str | None = row[2] if has_claims else None  # type: ignore[index]
+                if claim_cat and claim_cat != "review_discussion":
+                    claim_ents = self._store.by_claim(claim_cat)
+                    ents_row = claim_ents if claim_ents else []
+                else:
+                    ents_row = all_entries
+                eg = _build_evidence_graph_for_calibration(cmt_id, ents_row)
                 dec = Decision(
                     decision_id=cmt_id,
                     series_id="calib:wp4k",
@@ -202,6 +227,13 @@ class CFMCalibrator:
                     for factor, val in sc.factor_scores.items():
                         key = factor.value if hasattr(factor, "value") else str(factor)
                         factor_totals[key] = factor_totals.get(key, 0.0) + val
+                    # Track-B.6: record per-claim REVIEW_HISTORY factor
+                    if claim_cat and claim_cat not in rh_distribution:
+                        rh_key = "review_history"
+                        for f, v in sc.factor_scores.items():
+                            fk = f.value if hasattr(f, "value") else str(f)
+                            if fk == rh_key:
+                                rh_distribution[claim_cat] = round(v, 4)
                     factor_count += 1
                 except Exception:
                     pass
@@ -247,6 +279,7 @@ class CFMCalibrator:
             production_gate_criteria_met=False,
             recommendation=recommendation,
             gate_criteria_status=gate,
+            review_history_distribution=rh_distribution,
         )
 
 
