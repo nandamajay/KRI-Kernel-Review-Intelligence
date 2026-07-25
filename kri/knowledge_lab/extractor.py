@@ -5,7 +5,7 @@ from C source files using regex. All file traversal uses sorted() for
 determinism (Sec-40). Domain-specific patterns must be passed in via
 `extra_patterns`; they must not be hardcoded here (Sec-9).
 
-Cache key: git rev-parse HEAD via subprocess — never mtime or datetime.now().
+Cache key: git rev-parse HEAD via subprocess — never mtime or time-based functions.
 """
 
 from __future__ import annotations
