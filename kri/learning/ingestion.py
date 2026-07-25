@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 # Concern-signal patterns for claim category extraction.
 # Applied in order; first match wins.
+# Track-C C1: expanded with 8 audio/driver-domain signals (dapm, dai, machine driver, jack, dpcm)
+# NOTE: no domain-specific vendor prefixes here (Sec-9). Domain-specific symbols are
+# injected by the domain package plugin at runtime, not embedded in this generic module.
 _CLAIM_SIGNALS: list[tuple[str, str]] = [
     (r"(acked?[-\s]?by|reviewed[-\s]?by|lgtm)", "maintainer_ack"),
     (r"(nack|nak|not\s+accept|please\s+revert)", "maintainer_nack"),
@@ -44,11 +47,19 @@ _CLAIM_SIGNALS: list[tuple[str, str]] = [
     (r"(null\s+ptr|null.?pointer|dereference)", "null_deref"),
     (r"(lock|mutex|spin.?lock|race.?condition|deadlock)", "locking"),
     (r"(error.?handling|return\s+code|check.*return)", "error_handling"),
+    # Audio driver-domain signals (Track-C C1) — generic terms only, no vendor prefixes
+    (r"(dapm|widget|power.?domain|dapm_route)", "dapm"),
+    (r"(dai.?link|cpu.?dai|codec.?dai|dai_fmt|set_tdm|tdm_slot)", "dai"),
+    (r"(machine.?driver|platform.?driver|codec.?driver)", "audio_driver"),
+    (r"(jack|detection|hp_det|headphone|headset)", "jack_detection"),
+    (r"(dpcm|be.?dai|fe.?dai|no_pcm\b)", "dpcm"),
+    (r"(lpass|qdsp|q6afe|q6adm|q6asm|audioreach)", "qcom_lpass"),
+    (r"(probe.?order|pm_runtime|devm_snd|register_component|register_card)", "audio_lifecycle"),
+    (r"(dt.?binding|device.?tree|compatible|of_device_id)", "dt_binding"),
     (r"(coding\s+style|checkpatch|whitespace|indent|comment)", "style"),
     (r"(api.?misuse|wrong\s+function|should\s+use)", "api_misuse"),
     (r"(missing\s+test|add\s+test|no\s+test)", "missing_test"),
     (r"(performance|inefficient|slow|cache)", "performance"),
-    (r"(dt.?binding|device.?tree|compatible)", "dt_binding"),
 ]
 
 
@@ -122,10 +133,31 @@ class LoreIngestionEngine:
             logger.warning("WP4-J: failed to load %s: %s", path.name, exc)
             return []
 
+        # Track-C C1: author-vs-reviewer filter — collect the patch submitter's
+        # identity so self-replies (cover letter, patch-author follow-ups) are skipped.
+        patch_authors: set[str] = set()
+        for msg in getattr(thread, "messages", []):
+            if getattr(msg, "is_patch", False):
+                from_name = getattr(msg, "from_name", None)
+                from_email = getattr(msg, "from_email", None)
+                if from_name:
+                    patch_authors.add(from_name.lower())
+                if from_email:
+                    patch_authors.add(from_email.lower())
+                break  # first patch author is the series submitter
+
         comments: list[ReviewComment] = self._lore.extract_reviews(thread)
         entries: list[ReviewHistoryEntry] = []
 
         for comment in comments:
+            # Track-C C1: skip comments from the patch author (self-replies degrade signal)
+            if patch_authors and comment.author:
+                author_lower = comment.author.lower()
+                if any(a in author_lower for a in patch_authors):
+                    logger.debug(
+                        "WP4-J/C1: skip self-reply from patch author %s", comment.author
+                    )
+                    continue
             mid = (comment.provenance.version_or_commit or "").strip()
             if mid.startswith("rc:"):
                 mid = mid[3:]
