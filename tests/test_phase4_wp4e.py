@@ -88,7 +88,7 @@ def test_E1_blame_promotes_to_blame_backed():
 
     engine = _make_ire(evidence_engine=ev_engine, repo_manager=rm)
     comment = _make_comment(severity=Severity.INFO, confidence=0.5)
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
 
     assert len(result) == 1
     assert result[0].evidence_status == "blame_backed"
@@ -149,7 +149,7 @@ def test_E4_no_repo_manager_no_blame():
 
     engine = _make_ire(evidence_engine=ev_engine, repo_manager=None)
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
 
     assert result == []  # evidence_missing, no floor
     assert all(e.source_type != EvidenceSourceType.BLAME_HISTORY for e in real_graph.evidence)
@@ -171,7 +171,7 @@ def test_E5_blame_failure_degrades():
     engine = _make_ire(evidence_engine=ev_engine, repo_manager=rm)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert result == []
     assert comment.evidence_status == "evidence_missing"
 
@@ -198,7 +198,7 @@ def test_E6_rule_backed_overrides_blame_backed():
     engine = _make_ire(evidence_engine=ev_engine, repo_manager=rm)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
 
     assert len(result) == 1
     assert result[0].evidence_status == "rule_backed"
@@ -219,7 +219,7 @@ def test_E7_empty_blame_no_evidence_added():
     engine = _make_ire(evidence_engine=ev_engine, repo_manager=rm)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert result == []
     assert real_graph.evidence == []
 

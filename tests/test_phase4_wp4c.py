@@ -107,7 +107,7 @@ def test_C1_cfm_confidence_is_set():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=conf_engine)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
 
     assert len(result) == 1
     assert result[0].cfm_confidence is not None
@@ -135,7 +135,7 @@ def test_C2_shadow_mode_cfm_does_not_gate():
     engine = _make_ire(evidence_engine=ev_engine_empty, confidence_engine=conf_engine)
 
     comment_info = _make_comment(severity=Severity.INFO, confidence=0.5)
-    result = engine._apply_evidence_gate([comment_info], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment_info], _make_patch_mock(), _make_series_mock(), None)
     # High CFM must NOT rescue a non-floor comment — shadow mode means CFM is observational only
     assert result == [], "High CFM must not override evidence gate in shadow mode"
     assert comment_info.evidence_status == "evidence_missing"
@@ -147,7 +147,7 @@ def test_C2_shadow_mode_cfm_does_not_gate():
     engine2 = _make_ire(evidence_engine=ev_engine_full, confidence_engine=conf_engine_low)
 
     comment_warn = _make_comment(severity=Severity.WARNING, confidence=0.6)
-    result2 = engine2._apply_evidence_gate([comment_warn], _make_patch_mock(), _make_series_mock(), None)
+    result2, _ = engine2._apply_evidence_gate([comment_warn], _make_patch_mock(), _make_series_mock(), None)
     assert len(result2) == 1, "Low CFM must not block a comment with verified evidence"
     assert result2[0].evidence_status == "supported"
 
@@ -163,7 +163,7 @@ def test_C3_no_confidence_engine_cfm_stays_none():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=None)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert len(result) == 1
     assert result[0].cfm_confidence is None
 
@@ -181,7 +181,7 @@ def test_C4_confidence_engine_exception_degrades():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=conf_engine)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert len(result) == 1, "Exception in CFM must not suppress comment"
     assert result[0].cfm_confidence is None, "cfm_confidence stays None on exception"
 
@@ -198,7 +198,7 @@ def test_C5_cfm_set_on_safety_floor_comment():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=conf_engine)
 
     comment = _make_comment(severity=Severity.BLOCKER, confidence=0.80)
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert len(result) == 1
     assert result[0].evidence_status == "safety_floored"
     assert result[0].cfm_confidence is not None
@@ -217,7 +217,7 @@ def test_C6_cfm_confidence_is_valid_confidence_score():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=conf_engine)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     cfm = result[0].cfm_confidence
     assert isinstance(cfm, ConfidenceScore)
     assert cfm.level == ConfidenceLevel.LIKELY  # 0.80–0.94 = LIKELY
@@ -237,7 +237,7 @@ def test_C7_cfm_does_not_alter_evidence_status():
     engine = _make_ire(evidence_engine=ev_engine, confidence_engine=conf_engine)
 
     comment = _make_comment()
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     # evidence_status='supported' because evidence_graph.has_verified_evidence() == True
     assert result[0].evidence_status == "supported"
     # cfm_confidence populated but did not change evidence_status

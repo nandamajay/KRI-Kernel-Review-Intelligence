@@ -109,7 +109,7 @@ def test_B1_evidence_missing_suppresses_non_floor():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert result == [], "evidence_missing INFO comment should be suppressed"
     assert comment.evidence_status == "evidence_missing"
 
@@ -127,7 +127,7 @@ def test_B2_safety_floor_blocker_survives():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert len(result) == 1, "BLOCKER >= 0.70 must survive safety floor"
     assert result[0].evidence_status == "safety_floored"
 
@@ -145,7 +145,7 @@ def test_B3_safety_floor_warning_survives():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert len(result) == 1
     assert result[0].evidence_status == "safety_floored"
 
@@ -163,7 +163,7 @@ def test_B4_info_below_floor_threshold_suppressed():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert result == []
     assert comment.evidence_status == "evidence_missing"
 
@@ -181,7 +181,7 @@ def test_B5_supported_evidence_sets_status():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert len(result) == 1
     assert result[0].evidence_status == "supported"
 
@@ -199,7 +199,7 @@ def test_B6_rule_backed_evidence_sets_status():
     patch = _make_patch_mock()
     series = _make_series_mock()
 
-    result = engine._apply_evidence_gate([comment], patch, series, None)
+    result, _ = engine._apply_evidence_gate([comment], patch, series, None)
     assert len(result) == 1
     assert result[0].evidence_status == "rule_backed"
 
@@ -244,13 +244,13 @@ def test_B8_evidence_engine_exception_degrades():
 
     # Non-floor comment: suppressed
     comment_info = _make_comment(severity=Severity.INFO, confidence=0.5)
-    result = engine._apply_evidence_gate([comment_info], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment_info], _make_patch_mock(), _make_series_mock(), None)
     assert result == []
     assert comment_info.evidence_status == "evidence_missing"
 
     # Safety-floor comment: survives
     comment_blocker = _make_comment(severity=Severity.BLOCKER, confidence=0.80)
-    result2 = engine._apply_evidence_gate([comment_blocker], _make_patch_mock(), _make_series_mock(), None)
+    result2, _ = engine._apply_evidence_gate([comment_blocker], _make_patch_mock(), _make_series_mock(), None)
     assert len(result2) == 1
     assert result2[0].evidence_status == "safety_floored"
 
@@ -265,7 +265,7 @@ def test_B9_blocker_below_floor_threshold_suppressed():
     ev_engine = _make_evidence_engine(has_verified=False)
     engine = _make_engine_with_evidence_engine(ev_engine)
     comment = _make_comment(severity=Severity.BLOCKER, confidence=0.69)
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert result == []
     assert comment.evidence_status == "evidence_missing"
 
@@ -275,7 +275,7 @@ def test_B10_warning_below_floor_threshold_suppressed():
     ev_engine = _make_evidence_engine(has_verified=False)
     engine = _make_engine_with_evidence_engine(ev_engine)
     comment = _make_comment(severity=Severity.WARNING, confidence=0.69)
-    result = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
+    result, _ = engine._apply_evidence_gate([comment], _make_patch_mock(), _make_series_mock(), None)
     assert result == []
     assert comment.evidence_status == "evidence_missing"
 
