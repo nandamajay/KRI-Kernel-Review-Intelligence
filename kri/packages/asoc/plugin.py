@@ -326,3 +326,19 @@ class AsocDomainKnowledgePackage:
             )
             if g.has_node(supports_id):
                 g.add_edge(doc_ev_id, supports_id, EDGE_SUPPORTS, provenance=doc_prov)
+
+    # --- knowledge lab integration --------------------------------------------
+    @staticmethod
+    def knowledge_lab_patterns() -> list[tuple[str, str]]:
+        """Return ASoC-specific extraction patterns for kri/knowledge_lab/.
+
+        These are injected via the `extra_patterns` argument of extract_nodes()
+        so that knowledge_lab/ stays domain-agnostic (Sec-9).
+        """
+        return [
+            (r"^SND_SOC_DAPM_\w+\s*\(\"([^\"]+)\"", "dapm_widget"),
+            (r"^static\s+const\s+struct\s+snd_soc_dapm_widget\s+(\w+)\s*\[", "dapm_widget_table"),
+            (r"^static\s+const\s+struct\s+snd_soc_dapm_route\s+(\w+)\s*\[", "dapm_route_table"),
+            (r"^static\s+struct\s+snd_soc_dai_driver\s+(\w+)\s*[\[=]", "dai_driver"),
+            (r"^static\s+struct\s+snd_soc_card\s+(\w+)\s*=", "soc_card"),
+        ]
