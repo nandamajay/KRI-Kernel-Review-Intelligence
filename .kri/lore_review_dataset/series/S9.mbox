@@ -1,0 +1,112 @@
+From mboxrd@z Thu Jan  1 00:00:00 1970
+Received: from mail-wr1-f43.google.com (mail-wr1-f43.google.com [209.85.221.43])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES128-GCM-SHA256 (128/128 bits))
+	(No client certificate requested)
+	by smtp.subspace.kernel.org (Postfix) with ESMTPS id 607EA3090C5
+	for <netdev@vger.kernel.org>; Fri, 24 Jul 2026 14:31:56 +0000 (UTC)
+Authentication-Results: smtp.subspace.kernel.org; arc=none smtp.client-ip=209.85.221.43
+ARC-Seal:i=1; a=rsa-sha256; d=subspace.kernel.org; s=arc-20240116;
+	t=1784903517; cv=none; b=PPLcWmR/i4q9QI9iMhll6OJRce/ygJ/KyN+QCJH6poETEvcY5nOyl2OhPkJ+SZCrMKmKnkk3RucAM1xWFIz7teJMnqPz9oDgbjGxOE3yEjhvYMB4nXo6rS0zremCiVXNCYrddH4GCyVK7d0SLSiKVHXNVX5a3m99wo09RL/xM8g=
+ARC-Message-Signature:i=1; a=rsa-sha256; d=subspace.kernel.org;
+	s=arc-20240116; t=1784903517; c=relaxed/simple;
+	bh=fy/6VXrca6cTArIkcwgbzqSy4nb88fvBRtyEt2AiW6A=;
+	h=From:To:Cc:Subject:Date:Message-ID:In-Reply-To:References:
+	 MIME-Version; b=DJ0SPPSbr/CuNJRAdgeL8xPzwSAoW/umrhw4ypw/BukCdjpnnun8G5cTLRxouzRlNtPOFgyIeKseDA45gZ68TwSDYcB6/E7ODWNlOTHU9MgYgpLkeBn5V+KHUu2lCfgufAgUvn6h57iRGm9g0e/R4UD30cvdgKXB9dtfsJV2gRI=
+ARC-Authentication-Results:i=1; smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com; spf=pass smtp.mailfrom=gmail.com; dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b=h4BeGEeD; arc=none smtp.client-ip=209.85.221.43
+Authentication-Results: smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com
+Authentication-Results: smtp.subspace.kernel.org; spf=pass smtp.mailfrom=gmail.com
+Authentication-Results: smtp.subspace.kernel.org;
+	dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b="h4BeGEeD"
+Received: by mail-wr1-f43.google.com with SMTP id ffacd0b85a97d-47640541585so360352f8f.1
+        for <netdev@vger.kernel.org>; Fri, 24 Jul 2026 07:31:56 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20251104; t=1784903515; x=1785508315; darn=vger.kernel.org;
+        h=content-transfer-encoding:mime-version:references:in-reply-to
+         :message-id:date:subject:cc:to:from:from:to:cc:subject:date
+         :message-id:reply-to:content-type;
+        bh=9bzX/z7WuI+n+yzpnjbF3izMPRsb1Ain1wBuMaT5GFg=;
+        b=h4BeGEeDhwVvQoJv0CBnlMkRB1vBTEsXbdOuOuxnPXley2c3jXm6e+UFPjDVmz6+mB
+         CI94tRJciQqE1c01mLBhdLuWSwk2NXyZxWJrR4z5VXSeBU5izSKGZ7YhDAyyrXDh2Mtk
+         6uRsYvJsJhi+ydXqTzkm3GDMt/uqffvBU6HTJY7Oov2DqJUgLzWEAMMh6G6ITv4teiaW
+         SHmlgGgsMJkIA87KSM+AjBjr7TN1U3o8YU6rGqdidU+xs4pMyUld1XaJKOgPjiOoffOG
+         bJzqL6F1GhtWTi2B7JO0ph7Kq8R9GS/YfZbqf/FxEyuUxquADguj753xB+T+eKGwVh5L
+         qnig==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20251104; t=1784903515; x=1785508315;
+        h=content-transfer-encoding:mime-version:references:in-reply-to
+         :message-id:date:subject:cc:to:from:x-gm-gg:x-gm-message-state:from
+         :to:cc:subject:date:message-id:reply-to:content-type;
+        bh=9bzX/z7WuI+n+yzpnjbF3izMPRsb1Ain1wBuMaT5GFg=;
+        b=jXOrDjs0jQmM4wUtatjsEnTKAxkIPbpi7gx5jcwusSPT5vzj8eUyoQPFM1w260hitc
+         dgXidZDdP/UoGQ+hlLHXz/tc/MVElvhUa8ChHKP6EYHEVGAklCUxU0hY2Ws4BFOeyJzE
+         uvhmZCpzImBLgvLiJ3wPo4URduzgdGV5DLnaibMsneE6xTffCdcDi26lbJfkTV2rRfqt
+         JU/tI5nnfYMt2svdVX1TQRSe2sYna5iGuOBKmtwAStuoeJ0U2xrhcNbz+lpq0eobaXfS
+         ijdiwqDvjvkF7kllxV5nNbhN6wdJA/qmoIbYeo9n5IfnangH+/0wkyWNAHzGxnMB8Ach
+         5B9Q==
+X-Gm-Message-State: AOJu0Yyx629e0bsXzY0I+e5UdccM9q/s6A6JntoPqIOeLItDh8smlaW7
+	gldoX8jDHpFbKjEb08jx/uVB3XbL9TrL+8JHwH/8MYy/NQpLJAMxKvoU
+X-Gm-Gg: AR+sD13yYdJ5GHwl0JP2QjW6/WIoF6qn6EMtHPmlDTcs9FvTl65sz1D1KF5Oop1U9PW
+	sURs5am9MxWdfTEWhC9dEDQRALWCqu4iRbxTtt0pmk9XU+SuzjV9IKsL3DAznyB8pW5Ix33Iapr
+	00yRd8zZo/KFwsaApkCc4IViYAhrJ9CN7bqIbSUWyIiEotGoIJVILigs714teaDBpF3WGRGiNyQ
+	GLEMG5Gj5eQwrkpB9GiW2ipYGecnJ2hjlJOsliqT84WOjdBJymPgXd8/n4yDuuRmdFKO8IugYrH
+	m+Mjzf9lz2A5W5Y9YyVsqtIyoA4zyrye72TfniiiLBDPLgiVMErFi2pOEV420VzlCGIUapIE6Ir
+	sg595ODUSvve6hKW3E/4MbDXLd64nWnGc1dN2jjZsBJCPplt8we/MxwgJtCa+lGDtA/dwW5ET4O
+	HlYTgoWdaAQ4sGU7bPzhjLTgOAB5b1NyaKJmECnekRjeXaWdkd3VQnz64mUdFqxHGfbjUjXz8=
+X-Received: by 2002:a05:6000:4717:b0:47f:9254:d45c with SMTP id ffacd0b85a97d-47f9254d53dmr7788718f8f.31.1784903514458;
+        Fri, 24 Jul 2026 07:31:54 -0700 (PDT)
+Received: from labdl-itc-sw10.tmt.telital.com (static-82-85-31-68.clienti.tiscali.it. [82.85.31.68])
+        by smtp.gmail.com with ESMTPSA id ffacd0b85a97d-47f864305f5sm23898298f8f.17.2026.07.24.07.31.53
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Fri, 24 Jul 2026 07:31:54 -0700 (PDT)
+From: Daniele Palmas <dnlplm@gmail.com>
+To: Loic Poulain <loic.poulain@oss.qualcomm.com>,
+	Sergey Ryazanov <ryazanov.s.a@gmail.com>,
+	Johannes Berg <johannes@sipsolutions.net>,
+	Andrew Lunn <andrew+netdev@lunn.ch>,
+	David Miller <davem@davemloft.net>,
+	Eric Dumazet <edumazet@google.com>,
+	Jakub Kicinski <kuba@kernel.org>,
+	Paolo Abeni <pabeni@redhat.com>
+Cc: netdev@vger.kernel.org,
+	Daniele Palmas <dnlplm@gmail.com>
+Subject: [PATCH net-next v3 1/2] net: wwan: add minimalistic IOCTls support also to QCDM port
+Date: Fri, 24 Jul 2026 16:28:17 +0200
+Message-ID: <20260724142909.3270824-2-dnlplm@gmail.com>
+X-Mailer: git-send-email 2.43.0
+In-Reply-To: <20260724142909.3270824-1-dnlplm@gmail.com>
+References: <20260724142909.3270824-1-dnlplm@gmail.com>
+Precedence: bulk
+X-Mailing-List: netdev@vger.kernel.org
+List-Id: <netdev.vger.kernel.org>
+List-Subscribe: <mailto:netdev+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:netdev+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+
+Upstream libqcdm requires IOCTLs support to work, so add the current
+AT minimalistic support also to the QCDM port.
+
+Reviewed-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Signed-off-by: Daniele Palmas <dnlplm@gmail.com>
+---
+ drivers/net/wwan/wwan_core.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wwan/wwan_core.c b/drivers/net/wwan/wwan_core.c
+index ccce2ad74128..8168239e52c3 100644
+--- a/drivers/net/wwan/wwan_core.c
++++ b/drivers/net/wwan/wwan_core.c
+@@ -1046,7 +1046,8 @@ static long wwan_port_fops_ioctl(struct file *filp, unsigned int cmd,
+ 	struct wwan_port *port = filp->private_data;
+ 	int res;
+ 
+-	if (port->type == WWAN_PORT_AT) {	/* AT port specific IOCTLs */
++	if (port->type == WWAN_PORT_AT || port->type == WWAN_PORT_QCDM) {
++		/* AT and QCDM port specific IOCTLs */
+ 		res = wwan_port_fops_at_ioctl(port, cmd, arg);
+ 		if (res != -ENOIOCTLCMD)
+ 			return res;
+-- 
+2.43.0
+
+

@@ -857,6 +857,37 @@ function renderIntelligent(r){
     }
     html+=`</div>`;
   }
+  if(r.review_history_summary&&r.review_history_summary.length){
+    html+=`<details style="margin:1rem 0"><summary style="font-weight:700;color:#1a5276">📚 Historical Evidence (lore.kernel.org review threads — ${r.review_history_summary.length} series)</summary><div style="padding:0.5rem">`;
+    for(const s of r.review_history_summary){
+      html+=`<div style="border-left:3px solid #1a5276;padding:0.3rem 0.6rem;margin:0.4rem 0;font-size:0.85rem">`;
+      html+=`<b>${esc(s.series_id.slice(0,24))}</b> — ${s.entry_count||0} review entries`;
+      if(s.has_maintainer_feedback)html+=` <span style="color:#27ae60;font-weight:700">[maintainer feedback]</span>`;
+      if(s.source_urls&&s.source_urls.length){
+        html+=`<br><span style="color:#7f8c8d">Sources: `;
+        for(const u of s.source_urls.slice(0,3)){html+=`<a href="${esc(u)}" target="_blank" style="color:#2980b9;margin-right:0.4rem">[lore]</a>`;}
+        html+=`</span>`;
+      }
+      if(s.claim_categories&&Object.keys(s.claim_categories).length){
+        const cats=Object.entries(s.claim_categories).map(([k,v])=>`${esc(k)}:${v}`).join(', ');
+        html+=`<br><span style="color:#7f8c8d">Categories: ${cats}</span>`;
+      }
+      html+=`</div>`;
+    }
+    html+=`</div></details>`;
+  }
+  if(r.cfm_calibration){
+    const cal=r.cfm_calibration;
+    const rec=cal.recommendation||'CFM_SHADOW_STAYS';
+    const recColor=rec==='CFM_PRODUCTION_READY'?'#27ae60':'#e67e22';
+    html+=`<details style="margin:1rem 0"><summary style="font-weight:700;color:${recColor}">📊 CFM Shadow Calibration — ${esc(rec)}</summary><div style="padding:0.5rem;font-size:0.85rem">`;
+    html+=`<p><b>Series:</b> ${cal.series_count||0} | <b>Entries:</b> ${cal.entry_count||0} | <b>Samples:</b> ${cal.samples_calibrated||0}</p>`;
+    if(cal.cfm_vs_llm_correlation!=null)html+=`<p><b>CFM↔LLM Correlation:</b> ${Number(cal.cfm_vs_llm_correlation).toFixed(3)}</p>`;
+    if(cal.mean_absolute_error!=null)html+=`<p><b>Mean Abs Error:</b> ${Number(cal.mean_absolute_error).toFixed(3)}</p>`;
+    if(cal.false_positive_estimate!=null)html+=`<p><b>FP Estimate:</b> ${(Number(cal.false_positive_estimate)*100).toFixed(1)}%</p>`;
+    html+=`<p style="color:${recColor}"><b>Recommendation:</b> ${esc(rec)}</p>`;
+    html+=`</div></details>`;
+  }
   return html;
 }
 

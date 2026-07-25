@@ -138,6 +138,10 @@ class IntelligentReport(BaseModel):
     lore_reply: str = ""
     rule_based_decisions: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # WP4-J: Track-B lore review history summary
+    review_history_summary: list[dict[str, Any]] = Field(default_factory=list)
+    # WP4-K: Track-B CFM shadow calibration report
+    cfm_calibration: dict[str, Any] | None = None
 
 
 class PatchReview(BaseModel):

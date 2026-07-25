@@ -1,0 +1,141 @@
+From mboxrd@z Thu Jan  1 00:00:00 1970
+Received: from mail-wm1-f52.google.com (mail-wm1-f52.google.com [209.85.128.52])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES128-GCM-SHA256 (128/128 bits))
+	(No client certificate requested)
+	by smtp.subspace.kernel.org (Postfix) with ESMTPS id B691B456DE1
+	for <netdev@vger.kernel.org>; Fri, 24 Jul 2026 19:08:26 +0000 (UTC)
+Authentication-Results: smtp.subspace.kernel.org; arc=none smtp.client-ip=209.85.128.52
+ARC-Seal:i=1; a=rsa-sha256; d=subspace.kernel.org; s=arc-20240116;
+	t=1784920108; cv=none; b=L0Jn+W00r4oe0GgwuF4UwaPJ1BpWxruR3N8W5U3kJt7xQy9GyYIjRja+8Itv9kwazHCTRqXyKluAYtE3yFBuL3QLnMhfxPqYK3ObC1dZNtJQvRdUtgvNJ9GgTJuMGfW9WwWSVA+DjQZFCgArdsdNkehIXQrYLnz6B++8HdeJH0A=
+ARC-Message-Signature:i=1; a=rsa-sha256; d=subspace.kernel.org;
+	s=arc-20240116; t=1784920108; c=relaxed/simple;
+	bh=NbM57NUEnyZPiWIlBM88pNF9T9dCRUrWgoKS05GHLpo=;
+	h=From:To:Subject:Date:Message-ID:In-Reply-To:References:
+	 MIME-Version; b=MvassNUUQtLdVMRu3tTjooEVInbLRp8Y6RMiFuPrUheuJx6ZVQg7TxnZN8aHrmNwqcqWhtSDPlTogCQHRzD5cUyDhJw5xz+WxXYQqpF6lJRbPHCxgxMysiTaLga82XdrY48yRnh32xYjDsxQsdoYKqcBXF5wgRZKCMu1cJUllTg=
+ARC-Authentication-Results:i=1; smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com; spf=pass smtp.mailfrom=gmail.com; dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b=jRcRBQOb; arc=none smtp.client-ip=209.85.128.52
+Authentication-Results: smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com
+Authentication-Results: smtp.subspace.kernel.org; spf=pass smtp.mailfrom=gmail.com
+Authentication-Results: smtp.subspace.kernel.org;
+	dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b="jRcRBQOb"
+Received: by mail-wm1-f52.google.com with SMTP id 5b1f17b1804b1-4954df200ddso5906475e9.0
+        for <netdev@vger.kernel.org>; Fri, 24 Jul 2026 12:08:26 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20251104; t=1784920105; x=1785524905; darn=vger.kernel.org;
+        h=content-transfer-encoding:mime-version:references:in-reply-to
+         :message-id:date:subject:to:from:from:to:cc:subject:date:message-id
+         :reply-to:content-type;
+        bh=ZsRXfT5ibQiwiJAzw9HJHDQeaykvfcjebj1qaMIo5g8=;
+        b=jRcRBQObqhy9iUkh5bmKcNBKbKBlqL19JREhmWqf0S58WESOeaQ/4W7beKvVNsEE6o
+         6wNgModhyqA7ULHMd3kgfIUC4JNAqb4hmgjxFkI3ZpRaN+etxgYY/3HIpjr18LkBKILs
+         leh5Pb5gUIM1rb7phdpcBkp/LgU/Q8Jy3hLeGh235Dd2n5M8+dfWbcLUjTYiaopHKY6u
+         El9TgAWCCq1vRvnyRoriVI76E3fysN1FCWg2cLEKjWWg/TdHFYu46qlq0YOUMPKSukHP
+         NeBzsj7q2DG2Z3uRCKXNR116Ry6BnAPvdyN/UaGEFwe5Q0OuYc1vBWJW9Uvs6WGTUYaX
+         LMFg==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20251104; t=1784920105; x=1785524905;
+        h=content-transfer-encoding:mime-version:references:in-reply-to
+         :message-id:date:subject:to:from:x-gm-gg:x-gm-message-state:from:to
+         :cc:subject:date:message-id:reply-to:content-type;
+        bh=ZsRXfT5ibQiwiJAzw9HJHDQeaykvfcjebj1qaMIo5g8=;
+        b=SLBxDUnPu3BnTDAkUVCZ3IBH0VnsxjPhyiRAX0zpVARw+ogmWHv2LketuXNu8S6+Wb
+         NmDvnsw1v8Vjsrrd4ARiF12muLOxotpbLtIRYpHIORQTX07DSlocNI9byNeIg7vh+JQs
+         pE8W9sNUJ9flNubItcL2SPS/Lo2SLvTxMDhUUeGwBwzzoLOwznJD+JMPDoHpUucbDwby
+         qDqVY0YwCO+cROg/5ISG/nQmr0U7Shu+bAbvTBmpnQkP7lElqq+yHJGdUqGPuVfbiMZT
+         BiK9HOl+ua82g1wmpy8zkHlNWC5Wr3uVLgJtwzN4NbpbCYYSFsSl9QipKENgyFO7genB
+         kHUA==
+X-Forwarded-Encrypted: i=1; AHgh+Rr6lLhMJeTMkPunl8o5zMiZy7OUUu+XzgKeHCij/SEu5Cswy5maS5OSlCpgBVr+r8IZGcpF9UI=@vger.kernel.org
+X-Gm-Message-State: AOJu0Yw++/hZN7ZTbJiTdcRxZvXUOjFouvRN9JJn6XOrKzNe7XCZEaf2
+	nbHvZoeswjrPdyDjWdRs+R3T+UpJmOKhBIbSs4/oam6Yj0zmPsWhTunn
+X-Gm-Gg: AR+sD13i08cZdtYA0Qyoalbt/l4VAk5A+lG7NxKMp7/OXyY/sektgDEMdLPtkKd0TOe
+	tiSBQ0HjARQLa+nlGVxb3C9a3vyo1uqL/yDLKkwhuRWiDmDGg1wNRcn4HJ4mNYVUmlsys5mGFbG
+	zupsiQS23wBxlVWygKBlZ8eG3TynsTLi7zl0plNhbRuNKDgiwffE9Wm7JjOQMG8lTzHU9CGHxa4
+	AicDBdnzJDTksIVphoEJlKQdlxOc4rIg9YavLkzl+VfeJ0guRxN9dw8LEzETlHSEZtlGnl9ENOh
+	O7HtzONAyOQQNPUXT8hNMLpnXBW63A9JbNarM4Jt0hrPNe5zBFPMyjADElmYf7bUt19AOa9d6G2
+	VIp2fqkFYovZWZ6dn8EpdyyOWXcbysRUw25O1OHZKE+vGFSfVuP93fSSnxyOo78cnZh6mEsMktX
+	S7HdNoJighvMpZaJDvD/1qmAWmuuHiiBscSfDzF4loZ8BKrG+YyhZd5XETZtKocb+1
+X-Received: by 2002:a05:600c:198b:b0:495:6c0c:c221 with SMTP id 5b1f17b1804b1-49573d20820mr99735945e9.31.1784920104929;
+        Fri, 24 Jul 2026 12:08:24 -0700 (PDT)
+Received: from Ansuel-XPS24.localdomain (host-87-3-249-180.retail.telecomitalia.it. [87.3.249.180])
+        by smtp.googlemail.com with ESMTPSA id 5b1f17b1804b1-496b4c8d6b5sm5893755e9.2.2026.07.24.12.08.22
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Fri, 24 Jul 2026 12:08:24 -0700 (PDT)
+From: Christian Marangi <ansuelsmth@gmail.com>
+To: Andrew Lunn <andrew@lunn.ch>,
+	Heiner Kallweit <hkallweit1@gmail.com>,
+	Russell King <linux@armlinux.org.uk>,
+	"David S. Miller" <davem@davemloft.net>,
+	Eric Dumazet <edumazet@google.com>,
+	Jakub Kicinski <kuba@kernel.org>,
+	Paolo Abeni <pabeni@redhat.com>,
+	Christian Marangi <ansuelsmth@gmail.com>,
+	Daniel Golle <daniel@makrotopia.org>,
+	Qingfang Deng <dqfext@gmail.com>,
+	SkyLake Huang <SkyLake.Huang@mediatek.com>,
+	Matthias Brugger <matthias.bgg@gmail.com>,
+	AngeloGioacchino Del Regno <angelogioacchino.delregno@collabora.com>,
+	linux-kernel@vger.kernel.org,
+	netdev@vger.kernel.org,
+	linux-arm-kernel@lists.infradead.org,
+	linux-mediatek@lists.infradead.org
+Subject: [PATCH net-next v2 1/6] net: phy: mediatek: export __mtk_tr_write
+Date: Fri, 24 Jul 2026 21:08:04 +0200
+Message-ID: <20260724190811.198339-2-ansuelsmth@gmail.com>
+X-Mailer: git-send-email 2.53.0
+In-Reply-To: <20260724190811.198339-1-ansuelsmth@gmail.com>
+References: <20260724190811.198339-1-ansuelsmth@gmail.com>
+Precedence: bulk
+X-Mailing-List: netdev@vger.kernel.org
+List-Id: <netdev.vger.kernel.org>
+List-Subscribe: <mailto:netdev+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:netdev+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+
+Export __mtk_tr_write to directly write to debug register.
+
+Signed-off-by: Christian Marangi <ansuelsmth@gmail.com>
+---
+ drivers/net/phy/mediatek/mtk-phy-lib.c | 5 +++--
+ drivers/net/phy/mediatek/mtk.h         | 2 ++
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/phy/mediatek/mtk-phy-lib.c b/drivers/net/phy/mediatek/mtk-phy-lib.c
+index dfd0f4e439a2..78b998af5238 100644
+--- a/drivers/net/phy/mediatek/mtk-phy-lib.c
++++ b/drivers/net/phy/mediatek/mtk-phy-lib.c
+@@ -36,8 +36,8 @@ static void __mtk_tr_read(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+ 		*tr_high, *tr_low);
+ }
+ 
+-static void __mtk_tr_write(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+-			   u8 data_addr, u32 tr_data)
++void __mtk_tr_write(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
++		    u8 data_addr, u32 tr_data)
+ {
+ 	__phy_write(phydev, 0x11, tr_data & 0xffff);
+ 	__phy_write(phydev, 0x12, tr_data >> 16);
+@@ -45,6 +45,7 @@ static void __mtk_tr_write(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+ 		tr_data >> 16, tr_data & 0xffff);
+ 	__mtk_tr_access(phydev, false, ch_addr, node_addr, data_addr);
+ }
++EXPORT_SYMBOL_GPL(__mtk_tr_write);
+ 
+ void __mtk_tr_modify(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+ 		     u8 data_addr, u32 mask, u32 set)
+diff --git a/drivers/net/phy/mediatek/mtk.h b/drivers/net/phy/mediatek/mtk.h
+index 320f76ffa81f..f172f7d671c9 100644
+--- a/drivers/net/phy/mediatek/mtk.h
++++ b/drivers/net/phy/mediatek/mtk.h
+@@ -72,6 +72,8 @@ struct mtk_socphy_priv {
+ 	unsigned long		led_state;
+ };
+ 
++void __mtk_tr_write(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
++		    u8 data_addr, u32 tr_data);
+ void __mtk_tr_modify(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+ 		     u8 data_addr, u32 mask, u32 set);
+ void mtk_tr_modify(struct phy_device *phydev, u8 ch_addr, u8 node_addr,
+-- 
+2.53.0
+
+

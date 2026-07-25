@@ -1,0 +1,112 @@
+From mboxrd@z Thu Jan  1 00:00:00 1970
+Received: from mail-lj1-f176.google.com (mail-lj1-f176.google.com [209.85.208.176])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES128-GCM-SHA256 (128/128 bits))
+	(No client certificate requested)
+	by smtp.subspace.kernel.org (Postfix) with ESMTPS id B2EB24908C9
+	for <linux-staging@lists.linux.dev>; Thu, 23 Jul 2026 18:52:27 +0000 (UTC)
+Authentication-Results: smtp.subspace.kernel.org; arc=none smtp.client-ip=209.85.208.176
+ARC-Seal:i=1; a=rsa-sha256; d=subspace.kernel.org; s=arc-20240116;
+	t=1784832751; cv=none; b=hb+S7WiCdDNVnKPnRK5QYb3LlGAZcgedM0GdlXOHSF2WDZ1GAU/cZ3OdBgLebsoyURDfrCet/YWwBmxJmG+QdOGhYUouSFiV/8ANyagpaMZBPUXGtNsAiSKZ9Tgc96oprQiXhGZXHS8gZu3d1YsXk9Q7gKwk7U+doU2tWhqtj3I=
+ARC-Message-Signature:i=1; a=rsa-sha256; d=subspace.kernel.org;
+	s=arc-20240116; t=1784832751; c=relaxed/simple;
+	bh=jtb1dfPMaoreKcsQ8N5ItxaF395qXqULaSTj8ZO5pTQ=;
+	h=From:To:Cc:Subject:Date:Message-ID:MIME-Version; b=qn5sf8pZ05FkmMjFEfun7iFYTzWCliqOA1aP+uqXsujrguI+avqtRmfrtsi0JhEsBqmFDwxp+1S3/3PlNeXWz6tWYeYqDw8E0HjNNjMdYTxTbpFdo83oShzwNL+VuGKBD3fu5fPh9tKOw4Z7E4UjtNNg5bykUBRoRA9JG/goJUI=
+ARC-Authentication-Results:i=1; smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com; spf=pass smtp.mailfrom=gmail.com; dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b=FdMshbwp; arc=none smtp.client-ip=209.85.208.176
+Authentication-Results: smtp.subspace.kernel.org; dmarc=pass (p=none dis=none) header.from=gmail.com
+Authentication-Results: smtp.subspace.kernel.org; spf=pass smtp.mailfrom=gmail.com
+Authentication-Results: smtp.subspace.kernel.org;
+	dkim=pass (2048-bit key) header.d=gmail.com header.i=@gmail.com header.b="FdMshbwp"
+Received: by mail-lj1-f176.google.com with SMTP id 38308e7fff4ca-39c9107baa7so8044961fa.3
+        for <linux-staging@lists.linux.dev>; Thu, 23 Jul 2026 11:52:27 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20251104; t=1784832744; x=1785437544; darn=lists.linux.dev;
+        h=content-transfer-encoding:mime-version:message-id:date:subject:cc
+         :to:from:from:to:cc:subject:date:message-id:reply-to:content-type;
+        bh=yjgVM8geKt3/AuWw27/cEi3vTspr7e35stfS3ut0Hec=;
+        b=FdMshbwpLN7OWsrxpNMBH8TX6ik8ChjD7XR/tI/M4R4NNvtDmaZpvhln6pT8cQXA5U
+         hp1vdAqVoTZ3unKOWoRXcDsJd8Qi4D2r0bF3mY/9J9exj5Oz1o007gzixn2PAiqJR2TG
+         IYp9d3aJPa4wVmkCkh4TDEd2ECA7gXE1N7pVjeEcUzN0r9U0dTJeCW+39jHL2rkgAc4e
+         YrnO7DRhDYce/dNAksZVwlsAMtNjxJrRwxqVo1abu1qeOYDm7xBMxS/+P8AEsR7uCa18
+         k6d5xfBhwN5JifjxfGIerkfhKkktuts+NlmgZoGtF18AqR2joBwxASUOUvC3SLFFSNsE
+         q+0w==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20251104; t=1784832744; x=1785437544;
+        h=content-transfer-encoding:mime-version:message-id:date:subject:cc
+         :to:from:x-gm-gg:x-gm-message-state:from:to:cc:subject:date
+         :message-id:reply-to:content-type;
+        bh=yjgVM8geKt3/AuWw27/cEi3vTspr7e35stfS3ut0Hec=;
+        b=pLyIo0z/g0/aBpGvol13LECrja/fwPst0Wz+oGXkQfYyRSGzmJC2jan0CWbdPW7uf0
+         dhz9TLFNHaYOfx1m48T+NLLUFMHlTU7G1coGPn269yR10fdg16CrR9hDmQ+x0TmpxqZ6
+         OTVgB4XEqG2lywhNmCNLgAjsrbpgrrSAgD76rG9N8q1ddoxrw1pP9Vub5x56YHRZ7Ef+
+         UH8yu4U6fzhe9nMt6aMMNJ1S7yquCeTtJCbaDbbxQfNidLbgau8kpsD1BKDQdP5ieUDL
+         7k8Urso0ZtJuov6VPj5/7mAnBte3/ik2a1V6HFzKGYbzU7lqZDat3o9/Qb8b1e7IUaFa
+         kARA==
+X-Forwarded-Encrypted: i=1; AHgh+RoR/egpu0Wqde6rDpARY4wF++cyNXjXBVrLeKiUIJWz8uEj6MfX2c00eP/E8NmzPffrlZP/qEQEX1XiuV3a@lists.linux.dev
+X-Gm-Message-State: AOJu0Yzn7aFci9evih6iHnuDlNjUd/FNeq2NQEvIwgMRB9tAZNNqa5D7
+	4yfRM19y7dzsX9MYHdFWaa/EV50TjSVMExYPNI9RMZACPm9EWUuxjLtV
+X-Gm-Gg: AR+sD12Y7UsbYzpgHZsMgMZwA8MzTN84kP9pjIS+l3R3W52ZqD7Uru9HCxeMHuYi1J9
+	VGAF8eRpiyNe/XvTJ5d6aH5M6+N1c3smF0r8jLLkxy+IvU3Uf5VFwSJIqY6o9rf02E32wvdLHPZ
+	13RuJthUhg0SUVarTPJ6AgqYHRdzJOKRJRYTEXzjqoObFnNHfPansiAENLC1pQeA1sO8g460F0d
+	UoBDHO254lUHtr18K59MSP3fPGy0oH37C+pmkBc5FN0EFIcK8GUNPx+BXVG0Pk6+YZxxHWgP3W0
+	D4I0C99OOiuhevvQzoqEeY/tAXRm3sfCM+xZQBVpIEbxvjeBx17+L0qTq2U0V1no1PGm4yyPAAs
+	548RdAnOKHSF0g86QMDlZHuAKE3kUPC7SvRVhPs5UHnvbnKBh5PVkTUe1qQmaoquhk9UjfvO10p
+	8=
+X-Received: by 2002:a2e:ab89:0:b0:39a:e29b:7926 with SMTP id 38308e7fff4ca-39f07f35e31mr9410891fa.41.1784832743959;
+        Thu, 23 Jul 2026 11:52:23 -0700 (PDT)
+Received: from archlinux ([94.229.19.199])
+        by smtp.gmail.com with ESMTPSA id 38308e7fff4ca-39ef68b68ebsm11601731fa.10.2026.07.23.11.52.22
+        (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384 bits=256/256);
+        Thu, 23 Jul 2026 11:52:23 -0700 (PDT)
+From: Nikolay Kulikov <nikolayof23@gmail.com>
+To: Greg Kroah-Hartman <gregkh@linuxfoundation.org>,
+	Hans de Goede <hansg@kernel.org>,
+	Mauro Carvalho Chehab <mchehab@kernel.org>,
+	Sakari Ailus <sakari.ailus@linux.intel.com>,
+	Andy Shevchenko <andy@kernel.org>
+Cc: linux-media@vger.kernel.org,
+	linux-staging@lists.linux.dev,
+	linux-kernel@vger.kernel.org,
+	Nikolay Kulikov <nikolayof23@gmail.com>
+Subject: [PATCH v2 0/4] staging: media: atomisp: cleanup pci/hmm/ code
+Date: Thu, 23 Jul 2026 21:51:17 +0300
+Message-ID: <20260723185217.317981-1-nikolayof23@gmail.com>
+X-Mailer: git-send-email 2.55.0
+Precedence: bulk
+X-Mailing-List: linux-staging@lists.linux.dev
+List-Id: <linux-staging.lists.linux.dev>
+List-Subscribe: <mailto:linux-staging+subscribe@lists.linux.dev>
+List-Unsubscribe: <mailto:linux-staging+unsubscribe@lists.linux.dev>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+
+This series removes unused functions and replaces obscure
+variable-checking macros with clear conditional expressions.
+
+
+Changes in v2:
+	- Squashed the function removals in pci/hmm/hmm.c and
+	  pci/hmm/hmm_bo.c into a single commit.
+	- Add commits to cleanup macros from include/hmm/hmm_common.h,
+	  as suggested by Andy Shevchenko.
+
+Nikolay Kulikov (4):
+  staging: media: atomisp: remove unused functions from pci/hmm/
+  staging: media: atomisp: inline macros for checking the bo/bodev
+    pointer
+  staging: media: atomisp: inline the check_bo_status_*() macros
+  staging: media: atomisp: remove include/hmm/hmm_common.h file
+
+ .../staging/media/atomisp/include/hmm/hmm.h   |  17 --
+ .../media/atomisp/include/hmm/hmm_bo.h        |  46 ----
+ .../media/atomisp/include/hmm/hmm_common.h    |  60 -----
+ drivers/staging/media/atomisp/pci/hmm/hmm.c   |  41 ---
+ .../staging/media/atomisp/pci/hmm/hmm_bo.c    | 240 ++++++++----------
+ 5 files changed, 109 insertions(+), 295 deletions(-)
+ delete mode 100644 drivers/staging/media/atomisp/include/hmm/hmm_common.h
+
+
+base-commit: cb08dcd0a896c3ac8073a57296f2377b106c35b4
+-- 
+2.55.0
+
+
