@@ -174,6 +174,50 @@ def _enrich_with_blame(
         evidence_graph.evidence.append(ev)
 
 
+def _enrich_with_lore_history(
+    evidence_graph: EvidenceGraph,
+    comment_category: str,
+    review_history_store: Any,
+) -> set[str]:
+    """Enrich an EvidenceGraph with REVIEW_DISCUSSION evidence from the lore store.
+
+    Track-B.5: Activates the REVIEW_HISTORY confidence factor by adding verified=True
+    Evidence nodes from lore review history entries that match the comment's claim category.
+
+    Matching strategy: normalize comment_category via _classify_claim() (same 19-pattern
+    lexical matcher used at ingestion time) to get a canonical claim string, then call
+    store.by_claim().  'review_discussion' fallback returns [] (BLOCK-4).
+
+    Returns: set of series_ids of entries that contributed nodes (for post-hoc summary).
+    Degrades gracefully on any error — never raises.
+    """
+    from kri.learning.ingestion import _classify_claim, lore_evidence_for_claim
+
+    matched_series: set[str] = set()
+    try:
+        # Normalize to canonical claim vocabulary (BLOCK-1 resolution)
+        normalized_claim, _ = _classify_claim(comment_category)
+        evidence_nodes = lore_evidence_for_claim(normalized_claim, review_history_store)
+
+        # Dedup against existing evidence_ids already in the graph
+        existing_ids = {ev.evidence_id for ev in evidence_graph.evidence}
+        for ev in evidence_nodes:
+            if ev.evidence_id not in existing_ids:
+                evidence_graph.evidence.append(ev)
+                existing_ids.add(ev.evidence_id)
+
+        # Collect matched series_ids directly from the matching entries (O(n), not O(n²))
+        if evidence_nodes:
+            for entry in review_history_store.by_claim(normalized_claim):
+                if entry.source_url and entry.message_id:
+                    matched_series.add(entry.series_id)
+
+    except Exception as _exc:
+        logger.debug("B5: _enrich_with_lore_history failed (non-fatal): %s", _exc)
+    return matched_series
+
+
+
 def _apply_status_to_dict(r: Any) -> dict:
     """Serialise an ``ApplicabilityResult`` to a plain dict for metadata storage."""
     return {
@@ -324,15 +368,29 @@ class IntelligentReviewEngine:
             metadata["knowledge_state_id"] = knowledge_state_id
 
         # WP4-J: Track-B review history summary (shadow mode, no gate effect)
+        # Track-B.5: Collect matched lore series_ids from all patch reviews post-hoc.
+        # This is thread-safe: all futures have joined before this line.
+        # Only series that actually contributed Evidence nodes appear in the summary.
+        all_lore_matched: set[str] = set()
+        for pr in patch_reviews:
+            if pr.metadata:
+                for sid in pr.metadata.get("lore_matched_series", []):
+                    all_lore_matched.add(sid)
+
+        # WP4-J / Track-B.5: review_history_summary — filtered to matched series only.
+        # Previously: global summarise() → all 129 series regardless of review content.
+        # Now: only series that matched a comment's claim category during evidence enrichment.
         review_history_summary: list[dict] = []
         if self._review_history_store is not None:
             try:
-                review_history_summary = [
-                    s.model_dump()
-                    for s in self._review_history_store.summarise()
-                ]
+                if all_lore_matched:
+                    review_history_summary = [
+                        s.model_dump()
+                        for s in self._review_history_store.summarise_by_series_ids(all_lore_matched)
+                    ]
+                # else: no lore matches this review → empty summary (correct; no global leakage)
             except Exception as _rhs_exc:
-                logger.warning("WP4-J: review_history_store.summarise() failed: %s", _rhs_exc)
+                logger.warning("B5: review_history_store.summarise_by_series_ids() failed: %s", _rhs_exc)
 
         # WP4-K: Track-B CFM shadow calibration (shadow mode, no gate effect)
         cfm_calibration: dict | None = None
@@ -463,13 +521,14 @@ class IntelligentReviewEngine:
         # WP4-V: pre-initialize so PatchReview() can always receive it, even when
         # evidence_engine is None (avoids NameError on the mode-off path).
         gov_violations: list[str] = []
+        lore_matched_series: set[str] = set()
         if self._evidence_engine is not None:
             series_ctx_common: SeriesContext | None = None
             try:
                 series_ctx_common = build_series_context(series)
             except Exception as _sc_exc:
                 logger.warning("build_series_context failed: %s", _sc_exc)
-            all_comments = self._apply_evidence_gate(
+            all_comments, lore_matched_series = self._apply_evidence_gate(
                 all_comments, patch, series, series_ctx_common
             )
             # WP4-G: constitutional invariant check — evidence_missing BLOCKER/WARNING
@@ -530,6 +589,10 @@ class IntelligentReviewEngine:
             pr_metadata["reducer_diagnostics"] = reducer_diag
         if apply_status is not None:
             pr_metadata["apply_status"] = apply_status
+        # Track-B.5: store matched lore series_ids in metadata for post-hoc summary assembly.
+        # reviewer.review() collects these after ThreadPoolExecutor joins (thread-safe).
+        if lore_matched_series:
+            pr_metadata["lore_matched_series"] = sorted(lore_matched_series)
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
@@ -547,7 +610,7 @@ class IntelligentReviewEngine:
         patch: Patch,
         series: PatchSeries,
         series_ctx_common: SeriesContext | None,
-    ) -> list[InlineComment]:
+    ) -> tuple[list[InlineComment], set[str]]:
         """Apply the evidence gate to a list of merged comments.
 
         For each comment, converts it to a Decision, calls evidence_engine.gather(),
@@ -557,9 +620,13 @@ class IntelligentReviewEngine:
         confidence >= 0.70 are NEVER suppressed, regardless of evidence status.
         They receive evidence_status="safety_floored" when evidence is missing.
 
-        Returns: filtered list (evidence_missing comments suppressed unless safety floor).
+        Returns: (filtered_comments, matched_lore_series_ids).
+        matched_lore_series_ids is the set of lore series_ids that contributed Evidence nodes
+        during this gate pass; used by the caller to build a filtered review_history_summary.
+        Thread-safe: caller assembles summary post-hoc after ThreadPoolExecutor joins.
         """
         result: list[InlineComment] = []
+        all_matched_series: set[str] = set()
         for comment in comments:
             decision = _llm_comment_to_decision(comment, patch, series, self._dkp)
             try:
@@ -585,7 +652,17 @@ class IntelligentReviewEngine:
                             # BLAME_HISTORY priority=9 → strength = max(0, 1-(9-1)*0.08) = 0.36
                             ev.strength = max(0.0, 1.0 - (9 - 1) * 0.08)
 
+            # Track-B.5: enrich with REVIEW_DISCUSSION evidence from lore history store.
+            # Sets verified=True (ephemeral enrichment — lore URLs are verifiable public records).
+            # Activates REVIEW_HISTORY confidence factor (previously always 0.0).
+            if self._review_history_store is not None:
+                sids = _enrich_with_lore_history(
+                    evidence_graph, comment.category, self._review_history_store
+                )
+                all_matched_series.update(sids)
+
             # WP4-C: CFM shadow mode — score is computed but never used as gate.
+            # After B.5 enrichment, cfm_confidence now reflects per-comment lore evidence.
             if self._confidence_engine is not None:
                 try:
                     comment.cfm_confidence = self._confidence_engine.score(
@@ -621,7 +698,7 @@ class IntelligentReviewEngine:
                 else:
                     comment.evidence_status = "evidence_missing"
                     # evidence_missing non-floor comments are suppressed (not appended)
-        return result
+        return result, all_matched_series
 
     def _merge_comments(self, outputs: list[AgentReviewOutput]) -> list[InlineComment]:
         """Merge comments from all agents, deduplicate by location+category."""
