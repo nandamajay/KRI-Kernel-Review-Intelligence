@@ -338,8 +338,14 @@ class IntelligentReviewEngine:
         cfm_calibration: dict | None = None
         if self._cfm_calibrator is not None:
             try:
+                import hashlib as _hl
                 llm_comments = [
-                    (c.comment_id, c.confidence)
+                    (
+                        _hl.sha256(
+                            f"{c.file_path}:{c.line_number}:{c.message[:80]}".encode()
+                        ).hexdigest()[:16],
+                        c.confidence,
+                    )
                     for pr in patch_reviews
                     for c in pr.inline_comments
                 ]

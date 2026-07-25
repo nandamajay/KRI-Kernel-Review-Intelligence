@@ -376,6 +376,23 @@ def create_app(
                 evidence_engine = EvidenceEngineImpl(review_km)
             # WP4-C: CFM shadow mode — always constructed; scores stored but not gated.
             confidence_engine = ConfidenceEngineImpl()
+            # WP4-J/K: Track-B lore review history + CFM calibrator (shadow only)
+            review_history_store = None
+            cfm_calibrator_inst = None
+            try:
+                from kri.learning.store import ReviewHistoryStore
+                from kri.learning.calibration import CFMCalibrator
+                from kri.learning.ingestion import ingest_dataset
+                _dataset_index = Path(__file__).parent.parent.parent / ".kri/lore_review_dataset/index.jsonl"
+                _store_path = Path(_default_cache_dir()) / "review_history.jsonl"
+                review_history_store = ReviewHistoryStore(path=_store_path)
+                if _dataset_index.exists():
+                    ingest_dataset(_dataset_index, review_history_store, lore,
+                                   dataset_root=_dataset_index.parent.parent)
+                cfm_calibrator_inst = CFMCalibrator(confidence_engine=confidence_engine,
+                                                    store=review_history_store)
+            except Exception as _tb_exc:
+                logger.debug("WP4-J/K: Track-B wiring failed (non-fatal): %s", _tb_exc)
             engine = IntelligentReviewEngine(
                 client=client,
                 dkp=dkp,
@@ -391,6 +408,8 @@ def create_app(
                 knowledge_manager=review_km,
                 confidence_engine=confidence_engine,
                 repo_manager=repo_mgr,
+                review_history_store=review_history_store,
+                cfm_calibrator=cfm_calibrator_inst,
             )
             report = engine.review(series)
             return report.model_dump()
