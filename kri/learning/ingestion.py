@@ -338,4 +338,60 @@ def ingest_dataset(
     return all_new
 
 
-__all__ = ["LoreIngestionEngine", "ingest_dataset"]
+def lore_evidence_for_claim(
+    claim: str,
+    store: ReviewHistoryStore,
+) -> list["Evidence"]:
+    """Build per-review Evidence nodes from lore entries matching a claim category.
+
+    Track-B.5: This is the live-review enrichment path, distinct from seed_ekg().
+
+    verified=True justification:
+      lore.kernel.org URLs are permanent authenticated public records.
+      This mirrors _enrich_with_blame() (reviewer.py) which also sets verified=True
+      outside EvidenceEngineImpl.verify() — same precedent.
+      Contrast: seed_ekg() uses verified=False for long-term EKG writes pending
+      human governance review.  This function produces ephemeral per-review nodes only.
+
+    BLOCK-4: 'review_discussion' returns [] — prevents all-entries flood.
+    Sec-40: evidence_id via hashlib.sha256 (no uuid/random/time).
+    """
+    from kri.common.models import Evidence, EvidenceSourceType
+    import hashlib as _hl
+
+    entries = store.by_claim(claim)  # [] for 'review_discussion' (BLOCK-4)
+    evidence_nodes: list[Evidence] = []
+    seen_ids: set[str] = set()
+
+    for entry in entries:
+        # Tier-0 guard: skip any entry that lost provenance (defensive)
+        if not entry.source_url or not entry.message_id:
+            logger.warning("B5: lore_evidence_for_claim: skip entry %s missing provenance", entry.entry_id)
+            continue
+
+        source_type = EvidenceSourceType.REVIEW_DISCUSSION
+        if entry.evidence_type == "accepted_patch":
+            source_type = EvidenceSourceType.ACCEPTED_PATCH
+        elif entry.evidence_type == "rejected_patch":
+            source_type = EvidenceSourceType.REJECTED_PATCH
+
+        ev_id = "lore:" + _hl.sha256(f"lore:{entry.entry_id}".encode()).hexdigest()[:12]
+        if ev_id in seen_ids:
+            continue  # deduplicate store variants with same underlying entry
+        seen_ids.add(ev_id)
+
+        ev = Evidence(
+            evidence_id=ev_id,
+            source_type=source_type,
+            summary=f"lore review [{entry.extracted_claim}]: {entry.reviewer_text[:80]}",
+            provenance=entry.provenance,  # source_url + message_id preserved verbatim
+            verified=True,               # ephemeral enrichment — lore URL is verifiable public record
+            strength=_entry_strength_from_entry(entry),
+        )
+        evidence_nodes.append(ev)
+
+    logger.debug("B5: lore_evidence_for_claim(%s) → %d nodes", claim, len(evidence_nodes))
+    return evidence_nodes
+
+
+__all__ = ["LoreIngestionEngine", "ingest_dataset", "lore_evidence_for_claim"]
