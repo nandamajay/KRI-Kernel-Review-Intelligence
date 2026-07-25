@@ -230,6 +230,8 @@ class IntelligentReviewEngine:
         knowledge_manager: Any | None = None,
         confidence_engine: Any | None = None,
         repo_manager: Any | None = None,
+        review_history_store: Any | None = None,
+        cfm_calibrator: Any | None = None,
     ) -> None:
         self._client = client or LLMClient(config or LLMConfig())
         self._dkp = dkp
@@ -244,6 +246,10 @@ class IntelligentReviewEngine:
         self._confidence_engine = confidence_engine
         # WP4-E: repo_manager for blame-backed evidence (None = blame disabled)
         self._repo_manager = repo_manager
+        # WP4-J: Track-B lore review history store (None = no history, mode-off safe)
+        self._review_history_store = review_history_store
+        # WP4-K: Track-B CFM calibrator (None = no calibration)
+        self._cfm_calibrator = cfm_calibrator
         self._series_awareness = series_awareness
         self._series_context_builder = (
             series_context_builder or SeriesReviewContextBuilder()
@@ -317,6 +323,31 @@ class IntelligentReviewEngine:
         if knowledge_state_id is not None:
             metadata["knowledge_state_id"] = knowledge_state_id
 
+        # WP4-J: Track-B review history summary (shadow mode, no gate effect)
+        review_history_summary: list[dict] = []
+        if self._review_history_store is not None:
+            try:
+                review_history_summary = [
+                    s.model_dump()
+                    for s in self._review_history_store.summarise()
+                ]
+            except Exception as _rhs_exc:
+                logger.warning("WP4-J: review_history_store.summarise() failed: %s", _rhs_exc)
+
+        # WP4-K: Track-B CFM shadow calibration (shadow mode, no gate effect)
+        cfm_calibration: dict | None = None
+        if self._cfm_calibrator is not None:
+            try:
+                llm_comments = [
+                    (c.comment_id, c.confidence)
+                    for pr in patch_reviews
+                    for c in pr.inline_comments
+                ]
+                calib_report = self._cfm_calibrator.calibrate(llm_comments)
+                cfm_calibration = calib_report.model_dump()
+            except Exception as _cfm_cal_exc:
+                logger.warning("WP4-K: cfm_calibrator.calibrate() failed: %s", _cfm_cal_exc)
+
         return IntelligentReport(
             series_id=series.series_id,
             series_title=series.title,
@@ -324,6 +355,8 @@ class IntelligentReviewEngine:
             overall_assessment=overall,
             lore_reply=full_lore,
             metadata=metadata,
+            review_history_summary=review_history_summary,
+            cfm_calibration=cfm_calibration,
         )
 
     def _review_patch(
