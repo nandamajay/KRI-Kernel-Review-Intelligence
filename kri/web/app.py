@@ -572,6 +572,18 @@ def create_app(
                     "evidence_type": e.evidence_type,
                     "validation_status": e.validation_status,
                     "reviewer_text": e.reviewer_text[:200],
+                    "provenance": {
+                        "transformation_history": e.provenance.transformation_history,
+                        "source_url": e.provenance.source_url,
+                        "commit_hash": e.provenance.commit_hash,
+                        "retrieved_at": (
+                            e.provenance.retrieved_at.isoformat()
+                            if e.provenance.retrieved_at is not None
+                            else None
+                        ),
+                        "version_or_commit": e.provenance.version_or_commit,
+                        "source_confidence": e.provenance.source_confidence,
+                    },
                 }
                 for e in entries
             ]

@@ -141,3 +141,109 @@ def test_a10_content_type(client: TestClient) -> None:
         assert resp.status_code == 200
         ct = resp.headers.get("content-type", "")
         assert "application/json" in ct, f"{path} returned wrong content-type: {ct}"
+
+
+# ---------------------------------------------------------------------------
+# A11: /api/knowledge/lab/reviews — each entry contains provenance sub-object
+#      with transformation_history (D2 serialization fix)
+# ---------------------------------------------------------------------------
+
+def test_a11_reviews_provenance_key_present(client: TestClient) -> None:
+    """Every review entry must expose a provenance sub-object (D2 fix)."""
+    resp = client.get("/api/knowledge/lab/reviews")
+    assert resp.status_code == 200
+    entries = resp.json()["entries"]
+    for entry in entries:
+        assert "provenance" in entry, f"entry missing 'provenance': {entry}"
+        prov = entry["provenance"]
+        assert "transformation_history" in prov, (
+            f"provenance missing 'transformation_history': {prov}"
+        )
+        assert isinstance(prov["transformation_history"], list), (
+            "transformation_history must be a list"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A12: /api/knowledge/lab/reviews — transformation_history items are returned
+#      when entries with non-empty provenance exist in the store (D2 content)
+# ---------------------------------------------------------------------------
+
+def test_a12_reviews_provenance_transformation_history_content() -> None:
+    """Entries with transformation_history steps expose them in the API."""
+    import tempfile
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient as _TC
+
+    from kri.common.models import Provenance
+    from kri.learning.models import ReviewHistoryEntry
+    from kri.learning.store import ReviewHistoryStore
+    from kri.web.app import create_app
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        store_path = tmp_dir_path / "review_history.jsonl"
+
+        store = ReviewHistoryStore(path=store_path)
+        eid = ReviewHistoryEntry.make_entry_id("s1", "mid@a12", "reviewer comment")
+        prov = Provenance(
+            source_url="https://lore.kernel.org/r/mid@a12",
+            transformation_history=["ingested_by:LoreIngestionEngine", "validated:lexical_match"],
+        )
+        entry = ReviewHistoryEntry(
+            entry_id=eid,
+            series_id="s1",
+            message_id="mid@a12",
+            source_url="https://lore.kernel.org/r/mid@a12",
+            reviewer_text="reviewer comment",
+            extracted_claim="locking",
+            evidence_type="review_discussion",
+            confidence_basis="lexical_match:lock",
+            provenance=prov,
+        )
+        store.add(entry)
+
+        import unittest.mock as mock
+        import kri.web.app as _app_mod
+        with mock.patch.object(_app_mod, "_default_cache_dir", return_value=tmp_dir_path):
+            tc = _TC(create_app())
+            resp = tc.get("/api/knowledge/lab/reviews")
+
+        assert resp.status_code == 200
+        entries = resp.json()["entries"]
+        matched = [e for e in entries if e["entry_id"] == eid]
+        assert matched, "seeded entry not found in response"
+        prov_out = matched[0]["provenance"]
+        assert prov_out["transformation_history"] == [
+            "ingested_by:LoreIngestionEngine",
+            "validated:lexical_match",
+        ], f"unexpected transformation_history: {prov_out['transformation_history']}"
+
+
+# ---------------------------------------------------------------------------
+# A13: /knowledge-lab page — Provenance Chain column header present (D4 UI fix)
+# ---------------------------------------------------------------------------
+
+def test_a13_knowledge_lab_provenance_chain_column(client: TestClient) -> None:
+    """The /knowledge-lab page must contain a 'Provenance Chain' column header."""
+    resp = client.get("/knowledge-lab")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "Provenance Chain" in html, (
+        "knowledge-lab.html missing 'Provenance Chain' column header"
+    )
+
+
+# ---------------------------------------------------------------------------
+# A14: /knowledge-lab page — transformation_history rendering JS present (D4 UI fix)
+# ---------------------------------------------------------------------------
+
+def test_a14_knowledge_lab_transformation_history_js(client: TestClient) -> None:
+    """The /knowledge-lab page JS must reference transformation_history for rendering."""
+    resp = client.get("/knowledge-lab")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "transformation_history" in html, (
+        "knowledge-lab.html JS missing 'transformation_history' reference"
+    )

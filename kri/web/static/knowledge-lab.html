@@ -59,9 +59,9 @@ a:hover{text-decoration:underline}
   <h2>Lore Review Explorer</h2>
   <table id="reviews-table">
     <thead><tr>
-      <th>Series</th><th>Claim</th><th>Type</th><th>Status</th><th>Reviewer Text</th><th>Source</th>
+      <th>Series</th><th>Claim</th><th>Type</th><th>Status</th><th>Reviewer Text</th><th>Source</th><th>Provenance Chain</th>
     </tr></thead>
-    <tbody id="reviews-body"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+    <tbody id="reviews-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
   </table>
 </div>
 
@@ -116,12 +116,19 @@ async function loadReviews(){
     if (!r.ok) throw new Error(r.statusText);
     const d = await r.json();
     const entries = d.entries || [];
-    if (!entries.length){ tbody.innerHTML='<tr><td colspan="6" class="empty">No review entries.</td></tr>'; return; }
+    if (!entries.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">No review entries.</td></tr>'; return; }
     tbody.innerHTML = entries.map(e => {
       const cls = CLAIM_CLASS[e.extracted_claim] || 'badge-other';
       const src = e.source_url
         ? `<a href="${esc(e.source_url)}" target="_blank" rel="noopener">lore</a>`
         : '—';
+      const prov = e.provenance || {};
+      const steps = prov.transformation_history || [];
+      let provCell = '—';
+      if (steps.length) {
+        const listItems = steps.map((s, i) => `<li>${i + 1}. ${esc(s)}</li>`).join('');
+        provCell = `<details><summary style="cursor:pointer;color:#2980b9;font-size:0.78rem">Chain (${steps.length})</summary><ol style="margin:0.3rem 0 0 1rem;font-size:0.78rem;color:#555">${listItems}</ol></details>`;
+      }
       return `<tr>
         <td><code>${esc((e.series_id||'').slice(0,16))}</code></td>
         <td>${badge(esc(e.extracted_claim), cls)}</td>
@@ -129,9 +136,10 @@ async function loadReviews(){
         <td>${esc(e.validation_status)}</td>
         <td>${esc((e.reviewer_text||'').slice(0,120))}</td>
         <td>${src}</td>
+        <td>${provCell}</td>
       </tr>`;
     }).join('');
-  } catch(e){ tbody.innerHTML=`<tr><td colspan="6" class="err">Failed to load reviews: ${esc(e.message)}</td></tr>`; }
+  } catch(e){ tbody.innerHTML=`<tr><td colspan="7" class="err">Failed to load reviews: ${esc(e.message)}</td></tr>`; }
 }
 
 (async function init(){

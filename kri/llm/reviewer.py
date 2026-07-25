@@ -424,6 +424,7 @@ class IntelligentReviewEngine:
             metadata=metadata,
             review_history_summary=review_history_summary,
             cfm_calibration=cfm_calibration,
+            lore_matched_series=sorted(all_lore_matched),
         )
 
     def _review_patch(
@@ -594,8 +595,10 @@ class IntelligentReviewEngine:
             pr_metadata["apply_status"] = apply_status
         # Track-B.5: store matched lore series_ids in metadata for post-hoc summary assembly.
         # reviewer.review() collects these after ThreadPoolExecutor joins (thread-safe).
-        if lore_matched_series:
-            pr_metadata["lore_matched_series"] = sorted(lore_matched_series)
+        # D1: also surfaced as top-level PatchReview.lore_matched_series (first-class field).
+        sorted_lore_series = sorted(lore_matched_series)
+        if sorted_lore_series:
+            pr_metadata["lore_matched_series"] = sorted_lore_series
         return PatchReview(
             patch_id=patch.patch_id,
             subject=patch.subject,
@@ -605,6 +608,7 @@ class IntelligentReviewEngine:
             lore_reply=lore_reply,
             metadata=pr_metadata,
             governance_warnings=gov_violations,
+            lore_matched_series=sorted_lore_series,
         )
 
     def _apply_evidence_gate(

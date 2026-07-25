@@ -10,6 +10,7 @@ J7  - Every ingest entry has non-empty source_url and message_id (Tier-0 STOP gu
 J8  - ReviewHistorySummary in IntelligentReport model_dump() when populated
 J9  - review_history_summary JS guard present in UI page
 J10 - ingest_dataset on dataset index produces at least 1 entry
+J11 - GET /api/knowledge/lab/reviews includes provenance + transformation_history per entry
 """
 
 from __future__ import annotations
@@ -269,3 +270,71 @@ def test_J10_ingest_dataset_produces_entries() -> None:
         "ingest_dataset produced 0 entries from the dataset index"
     )
     assert store.count() >= 1
+
+
+# ---------------------------------------------------------------------------
+# J11 - GET /api/knowledge/lab/reviews includes provenance per entry (API-layer)
+# ---------------------------------------------------------------------------
+
+
+def test_J11_api_reviews_includes_provenance_fields() -> None:
+    """API endpoint must serialize provenance (Constitution Sec. 37) for each entry."""
+    import tempfile
+    from pathlib import Path
+
+    from kri.learning.store import ReviewHistoryStore
+    from kri.lore_manager import LoreConfig, LoreManagerImpl
+    from kri.patch_manager import PatchManagerImpl
+    from kri.web.app import create_app
+
+    # Use a temp directory so the store file is named review_history.jsonl,
+    # matching what the endpoint constructs as _default_cache_dir() / "review_history.jsonl".
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cache_dir = Path(tmp_dir)
+        store_path = cache_dir / "review_history.jsonl"
+
+        store = ReviewHistoryStore(path=store_path)
+        eid = ReviewHistoryEntry.make_entry_id("sid:j11", "mid@j11", "fix the locking")
+        entry = ReviewHistoryEntry(
+            entry_id=eid,
+            series_id="sid:j11",
+            message_id="mid@j11",
+            source_url="https://lore.kernel.org/r/mid@j11",
+            reviewer_text="fix the locking",
+            extracted_claim="locking",
+            evidence_type="review_discussion",
+            confidence_basis="lexical:lock",
+        )
+        store.add(entry)
+
+        lm = LoreManagerImpl(LoreConfig(cache_dir=str(cache_dir)))
+        pm = PatchManagerImpl(lore_manager=lm)
+        app = create_app(lore_manager=lm, patch_manager=pm)
+
+        # Patch the review-store path used by the endpoint to point at our temp dir.
+        import kri.web.app as _app_mod
+        _orig = _app_mod._default_cache_dir  # type: ignore[attr-defined]
+
+        def _patched_cache_dir() -> Path:
+            return cache_dir
+
+        _app_mod._default_cache_dir = _patched_cache_dir  # type: ignore[attr-defined]
+        try:
+            client = TestClient(app)
+            resp = client.get("/api/knowledge/lab/reviews")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "entries" in data, "Response must have 'entries' key"
+            assert len(data["entries"]) >= 1, "Expected at least 1 entry in response"
+            for item in data["entries"]:
+                assert "provenance" in item, (
+                    f"Entry {item.get('entry_id')} missing 'provenance' in API response "
+                    "(Constitution Sec. 37)"
+                )
+                prov = item["provenance"]
+                assert "transformation_history" in prov, (
+                    f"Entry {item.get('entry_id')} provenance missing 'transformation_history'"
+                )
+                assert isinstance(prov["transformation_history"], list)
+        finally:
+            _app_mod._default_cache_dir = _orig  # type: ignore[attr-defined]

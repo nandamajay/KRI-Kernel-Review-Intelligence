@@ -17,7 +17,14 @@ from pathlib import Path
 import pytest
 
 from kri.confidence_engine.engine import ConfidenceEngineImpl
-from kri.learning.calibration import CFMCalibrator, _pearson
+from kri.learning.calibration import (
+    CFMCalibrator,
+    _pearson,
+    _pearson_t_stat,
+    _pearson_significant,
+    _t_critical_05,
+    _PEARSON_MIN_SAMPLES,
+)
 from kri.learning.models import CFMCalibrationReport, ReviewHistoryEntry
 from kri.learning.store import ReviewHistoryStore
 from kri.common.models import Provenance
@@ -248,3 +255,130 @@ def test_B6_calibrate_empty_returns_cfm_shadow_stays() -> None:
     assert report.samples_calibrated == 0
     assert report.recommendation == "CFM_SHADOW_STAYS"
     assert report.production_gate_criteria_met is False
+
+
+# ---------------------------------------------------------------------------
+# B6-8 (Track-B.7 D3): _pearson_t_stat returns None for n < 3
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_pearson_t_stat_none_for_small_n() -> None:
+    """_pearson_t_stat must return None when n < 3 (no degrees of freedom)."""
+    from kri.learning.calibration import _pearson_t_stat
+
+    assert _pearson_t_stat(0.5, 0) is None
+    assert _pearson_t_stat(0.5, 1) is None
+    assert _pearson_t_stat(0.5, 2) is None
+
+
+# ---------------------------------------------------------------------------
+# B6-9 (Track-B.7 D3): _pearson_t_stat computes correct value for known r/n
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_pearson_t_stat_correct_value() -> None:
+    """t = r * sqrt(n-2) / sqrt(1 - r^2).
+
+    For r=-0.195, n=32: t = -0.195 * sqrt(30) / sqrt(1 - 0.038025)
+                          ≈ -0.195 * 5.4772 / sqrt(0.961975)
+                          ≈ -1.068 / 0.9808  ≈ -1.089.
+    This must NOT be significant (|t| < 2.042 for df=30 at α=0.05).
+    """
+    from kri.learning.calibration import _pearson_t_stat, _pearson_significant
+
+    r = -0.195
+    n = 32
+    t = _pearson_t_stat(r, n)
+    assert t is not None
+    assert abs(t - (-1.089)) < 0.01, f"Expected t ≈ -1.089, got {t}"
+    sig = _pearson_significant(r, n)
+    assert sig is False, (
+        f"r={r}, n={n} should NOT be significant (|t|={abs(t):.3f} < 2.042)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B6-10 (Track-B.7 D3): _pearson_significant returns True for clearly significant r
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_pearson_significant_true_for_strong_correlation() -> None:
+    """A strong correlation with large n must be flagged as significant.
+
+    r=0.8, n=30: t = 0.8 * sqrt(28) / sqrt(1 - 0.64) = 0.8*5.292/0.6 ≈ 7.06.
+    df=28, t_crit ≈ 2.048 → clearly significant.
+    """
+    from kri.learning.calibration import _pearson_significant
+
+    assert _pearson_significant(0.8, 30) is True
+    assert _pearson_significant(-0.8, 30) is True
+
+
+# ---------------------------------------------------------------------------
+# B6-11 (Track-B.7 D3): CFMCalibrationReport has pearson_t_stat + correlation_significant
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_cfm_report_has_significance_fields() -> None:
+    """CFMCalibrationReport must expose pearson_t_stat and correlation_significant."""
+    report = CFMCalibrationReport()
+    assert hasattr(report, "pearson_t_stat"), "pearson_t_stat field missing"
+    assert hasattr(report, "correlation_significant"), "correlation_significant field missing"
+    # Defaults are None (no correlation computed yet)
+    assert report.pearson_t_stat is None
+    assert report.correlation_significant is None
+
+
+# ---------------------------------------------------------------------------
+# B6-12 (Track-B.7 D3): calibrate() populates significance fields + new gate keys
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_calibrate_populates_significance_and_gate_keys() -> None:
+    """calibrate() must populate pearson_t_stat, correlation_significant, and
+    add 'correlation_min_samples_met' and 'correlation_significant' to gate_criteria_status.
+    """
+    entries = [_entry(f"s{i}", f"m{i}@t", "dai") for i in range(10)]
+    store = _make_store(*entries)
+    calibrator = _make_calibrator(store)
+
+    # 15 comments — well below _PEARSON_MIN_SAMPLES=50
+    comments = [(f"cmt:{i}", 0.3 + i * 0.03) for i in range(15)]
+    report = calibrator.calibrate(comments)
+
+    # New gate keys present
+    assert "correlation_min_samples_met" in report.gate_criteria_status, (
+        "gate_criteria_status must include 'correlation_min_samples_met'"
+    )
+    assert "correlation_significant" in report.gate_criteria_status, (
+        "gate_criteria_status must include 'correlation_significant'"
+    )
+
+    # With only 15 samples, min-samples gate must be False
+    assert report.gate_criteria_status["correlation_min_samples_met"] is False, (
+        f"Expected correlation_min_samples_met=False for n=15 < {_PEARSON_MIN_SAMPLES}"
+    )
+
+    # pearson_t_stat and correlation_significant present on report (may be None
+    # if correlation itself is None, but fields must exist)
+    assert "pearson_t_stat" in report.model_dump()
+    assert "correlation_significant" in report.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# B6-13 (Track-B.7 D3): empty calibrate() gate also includes new keys
+# ---------------------------------------------------------------------------
+
+
+def test_B6_D3_empty_calibrate_gate_includes_new_keys() -> None:
+    """calibrate([]) must include the two new D3 gate keys even in the fast-exit path."""
+    e = _entry("s1", "m1@t", "dai")
+    store = _make_store(e)
+    calibrator = _make_calibrator(store)
+
+    report = calibrator.calibrate([])
+
+    assert "correlation_min_samples_met" in report.gate_criteria_status
+    assert "correlation_significant" in report.gate_criteria_status
+    assert report.gate_criteria_status["correlation_min_samples_met"] is False
+    assert report.gate_criteria_status["correlation_significant"] is False

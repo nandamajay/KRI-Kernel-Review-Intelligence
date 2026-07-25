@@ -142,6 +142,8 @@ class IntelligentReport(BaseModel):
     review_history_summary: list[dict[str, Any]] = Field(default_factory=list)
     # WP4-K: Track-B CFM shadow calibration report
     cfm_calibration: dict[str, Any] | None = None
+    # D1: union of lore series IDs that contributed evidence across all patches in this series
+    lore_matched_series: list[str] = Field(default_factory=list)
 
 
 class PatchReview(BaseModel):
@@ -156,3 +158,5 @@ class PatchReview(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     # WP4-V: governance violations surfaced in API response (Phase-4V fix)
     governance_warnings: list[str] = Field(default_factory=list)
+    # D1: lore series IDs whose review history contributed evidence for this patch
+    lore_matched_series: list[str] = Field(default_factory=list)

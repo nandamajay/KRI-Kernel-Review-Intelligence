@@ -1,0 +1,1631 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 1/9] watchdog: w83627hf_wdt: Replace magic numbers with
+ descriptive macros
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:28 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-1-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Raw hex values for Super I/O register addresses are difficult to understand
+without constantly consulting the datasheet. Use named macros instead.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 43 ++++++++++++++++++++++++++---------------
+ 1 file changed, 27 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index db77599e43a0..1529a4e16820 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -27,6 +27,7 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/bits.h>
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+ #include <linux/types.h>
+@@ -71,6 +72,12 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+  *	Kernel methods.
+  */
+ 
++#define SIO_REG_LDSEL		0x07	/* Logical device select */
++#define SIO_REG_DEVID		0x20	/* Device ID (1 or 2 bytes) */
++#define SIO_REG_ENABLE		0x30	/* Logical device enable */
++#define SIO_REG_CONF_ADDR0	0x2E
++#define SIO_REG_CONF_ADDR1	0x4E
++
+ #define WDT_EFER (wdt_io+0)   /* Extended Function Enable Registers */
+ #define WDT_EFIR (wdt_io+0)   /* Extended Function Index Register
+ 							(same as EFER) */
+@@ -115,9 +122,12 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+ #define W836X7HF_WDT_CSR	0xf7
+ #define NCT6102D_WDT_CSR	0xf2
+ 
+-#define WDT_CSR_STATUS		0x10
+-#define WDT_CSR_KBD		0x40
+-#define WDT_CSR_MOUSE		0x80
++#define WDT_CSR_STATUS		BIT(4)
++#define WDT_CSR_KBD_INT_RESET	BIT(6)
++#define WDT_CSR_MOUSE_INT_RESET	BIT(7)
++
++#define WDT_CTRL_RISING_EDGE_KBD_RESET	BIT(2)
++#define WDT_CTRL_MINUTE_MODE		BIT(3)
+ 
+ static void superio_outb(int reg, int val)
+ {
+@@ -144,7 +154,7 @@ static int superio_enter(void)
+ 
+ static void superio_select(int ld)
+ {
+-	superio_outb(0x07, ld);
++	superio_outb(SIO_REG_LDSEL, ld);
+ }
+ 
+ static void superio_exit(void)
+@@ -165,9 +175,9 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 	superio_select(W83627HF_LD_WDT);
+ 
+ 	/* set CR30 bit 0 to activate GPIO2 */
+-	t = superio_inb(0x30);
++	t = superio_inb(SIO_REG_ENABLE);
+ 	if (!(t & 0x01))
+-		superio_outb(0x30, t | 0x01);
++		superio_outb(SIO_REG_ENABLE, t | 0x01);
+ 
+ 	switch (chip) {
+ 	case w83627hf:
+@@ -248,16 +258,17 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 		}
+ 	}
+ 
+-	/* set second mode & disable keyboard turning off watchdog */
+-	t = superio_inb(cr_wdt_control) & ~0x0C;
++	/* set second mode & disable keyboard reset turning off watchdog */
++	t = superio_inb(cr_wdt_control) &
++	    ~(WDT_CTRL_MINUTE_MODE | WDT_CTRL_RISING_EDGE_KBD_RESET);
+ 	superio_outb(cr_wdt_control, t);
+ 
+ 	t = superio_inb(cr_wdt_csr);
+ 	if (t & WDT_CSR_STATUS)
+ 		wdog->bootstatus |= WDIOF_CARDRESET;
+ 
+-	/* reset status, disable keyboard & mouse turning off watchdog */
+-	t &= ~(WDT_CSR_STATUS | WDT_CSR_KBD | WDT_CSR_MOUSE);
++	/* reset status, disable keyboard & mouse interrupt turning off watchdog */
++	t &= ~(WDT_CSR_STATUS | WDT_CSR_KBD_INT_RESET | WDT_CSR_MOUSE_INT_RESET);
+ 	superio_outb(cr_wdt_csr, t);
+ 
+ 	superio_exit();
+@@ -355,7 +366,7 @@ static int wdt_find(int addr)
+ 	if (ret)
+ 		return ret;
+ 	superio_select(W83627HF_LD_WDT);
+-	val = superio_inb(0x20);
++	val = superio_inb(SIO_REG_DEVID);
+ 	switch (val) {
+ 	case W83627HF_ID:
+ 		ret = w83627hf;
+@@ -431,7 +442,7 @@ static int wdt_find(int addr)
+ 		cr_wdt_csr = NCT6102D_WDT_CSR;
+ 		break;
+ 	case NCT6116_ID:
+-		val = superio_inb(0x21);
++		val = superio_inb(SIO_REG_DEVID + 1);
+ 		if (val == NCT6126_VER_A_LOW_ID || val == NCT6126_VER_B_LOW_ID)
+ 			ret = nct6126;
+ 		else
+@@ -513,11 +524,11 @@ static int __init wdt_init(void)
+ 	/* Apply system-specific quirks */
+ 	dmi_check_system(wdt_dmi_table);
+ 
+-	wdt_io = 0x2e;
+-	chip = wdt_find(0x2e);
++	wdt_io = SIO_REG_CONF_ADDR0;
++	chip = wdt_find(SIO_REG_CONF_ADDR0);
+ 	if (chip < 0) {
+-		wdt_io = 0x4e;
+-		chip = wdt_find(0x4e);
++		wdt_io = SIO_REG_CONF_ADDR1;
++		chip = wdt_find(SIO_REG_CONF_ADDR1);
+ 		if (chip < 0)
+ 			return chip;
+ 	}
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 2/9] watchdog: w83627hf_wdt: Convert to platform driver
+ model
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:29 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-2-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Convert the driver to the Linux driver model with a platform driver /
+device.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 131 ++++++++++++++++++++++++++--------------
+ 1 file changed, 84 insertions(+), 47 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index 1529a4e16820..993e65ce4447 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -29,6 +29,7 @@
+ 
+ #include <linux/bits.h>
+ #include <linux/module.h>
++#include <linux/platform_device.h>
+ #include <linux/moduleparam.h>
+ #include <linux/types.h>
+ #include <linux/watchdog.h>
+@@ -129,6 +130,8 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+ #define WDT_CTRL_RISING_EDGE_KBD_RESET	BIT(2)
+ #define WDT_CTRL_MINUTE_MODE		BIT(3)
+ 
++struct wdt_pdata {};
++
+ static void superio_outb(int reg, int val)
+ {
+ 	outb(reg, WDT_EFER);
+@@ -464,6 +467,37 @@ static int wdt_find(int addr)
+ 	return ret;
+ }
+ 
++static int wdt_probe(struct platform_device *pdev)
++{
++	const struct platform_device_id *id = platform_get_device_id(pdev);
++	enum chips chip = id->driver_data;
++	int ret;
++
++	pr_info("WDT driver for %s Super I/O chip initialising\n", id->name);
++
++	snprintf(wdt_info.identity, sizeof(wdt_info.identity), "%s Watchdog",
++		 id->name);
++
++	watchdog_init_timeout(&wdt_dev, timeout, NULL);
++	watchdog_set_nowayout(&wdt_dev, nowayout);
++	watchdog_stop_on_reboot(&wdt_dev);
++
++	ret = w83627hf_init(&wdt_dev, chip);
++	if (ret) {
++		pr_err("failed to initialize watchdog (err=%d)\n", ret);
++		return ret;
++	}
++
++	ret = devm_watchdog_register_device(&pdev->dev, &wdt_dev);
++	if (ret)
++		return ret;
++
++	pr_info("initialized. timeout=%d sec (nowayout=%d)\n", wdt_dev.timeout,
++		nowayout);
++
++	return ret;
++}
++
+ /*
+  * On some systems, the NCT6791D comes with a companion chip and the
+  * watchdog function is in this companion chip. We must use a different
+@@ -490,36 +524,49 @@ static const struct dmi_system_id wdt_dmi_table[] __initconst = {
+ 	{}
+ };
+ 
++static const struct platform_device_id wdt_ids[] = {
++	{ .name = "W83627HF", .driver_data = w83627hf },
++	{ .name = "W83627S", .driver_data = w83627s },
++	{ .name = "W83697HF", .driver_data = w83697hf },
++	{ .name = "W83697UG", .driver_data = w83697ug },
++	{ .name = "W83637HF", .driver_data = w83637hf },
++	{ .name = "W83627THF", .driver_data = w83627thf },
++	{ .name = "W83687THF", .driver_data = w83687thf },
++	{ .name = "W83627EHF", .driver_data = w83627ehf },
++	{ .name = "W83627DHG", .driver_data = w83627dhg },
++	{ .name = "W83627UHG", .driver_data = w83627uhg },
++	{ .name = "W83667HG", .driver_data = w83667hg },
++	{ .name = "W83667DHG-P", .driver_data = w83627dhg_p },
++	{ .name = "W83667HG-B", .driver_data = w83667hg_b },
++	{ .name = "NCT6775", .driver_data = nct6775 },
++	{ .name = "NCT6776", .driver_data = nct6776 },
++	{ .name = "NCT6779", .driver_data = nct6779 },
++	{ .name = "NCT6791", .driver_data = nct6791 },
++	{ .name = "NCT6792", .driver_data = nct6792 },
++	{ .name = "NCT6793", .driver_data = nct6793 },
++	{ .name = "NCT6795", .driver_data = nct6795 },
++	{ .name = "NCT6796", .driver_data = nct6796 },
++	{ .name = "NCT6102", .driver_data = nct6102 },
++	{ .name = "NCT6116", .driver_data = nct6116 },
++	{ .name = "NCT6126", .driver_data = nct6126 },
++	{},
++};
++
++static struct platform_driver wdt_driver = {
++	.probe          = wdt_probe,
++	.id_table       = wdt_ids,
++	.driver         = {
++		.name   = KBUILD_MODNAME,
++	},
++};
++
++static struct platform_device *wdt_pdev;
++
+ static int __init wdt_init(void)
+ {
++	struct wdt_pdata pdata;
+ 	int ret;
+ 	int chip;
+-	static const char * const chip_name[] = {
+-		"W83627HF",
+-		"W83627S",
+-		"W83697HF",
+-		"W83697UG",
+-		"W83637HF",
+-		"W83627THF",
+-		"W83687THF",
+-		"W83627EHF",
+-		"W83627DHG",
+-		"W83627UHG",
+-		"W83667HG",
+-		"W83667DHG-P",
+-		"W83667HG-B",
+-		"NCT6775",
+-		"NCT6776",
+-		"NCT6779",
+-		"NCT6791",
+-		"NCT6792",
+-		"NCT6793",
+-		"NCT6795",
+-		"NCT6796",
+-		"NCT6102",
+-		"NCT6116",
+-		"NCT6126"
+-	};
+ 
+ 	/* Apply system-specific quirks */
+ 	dmi_check_system(wdt_dmi_table);
+@@ -533,35 +580,25 @@ static int __init wdt_init(void)
+ 			return chip;
+ 	}
+ 
+-	pr_info("WDT driver for %s Super I/O chip initialising\n",
+-		chip_name[chip]);
+-
+-	snprintf(wdt_info.identity, sizeof(wdt_info.identity), "%s Watchdog",
+-		 chip_name[chip]);
+-
+-	watchdog_init_timeout(&wdt_dev, timeout, NULL);
+-	watchdog_set_nowayout(&wdt_dev, nowayout);
+-	watchdog_stop_on_reboot(&wdt_dev);
+-
+-	ret = w83627hf_init(&wdt_dev, chip);
+-	if (ret) {
+-		pr_err("failed to initialize watchdog (err=%d)\n", ret);
+-		return ret;
+-	}
+-
+-	ret = watchdog_register_device(&wdt_dev);
++	ret = platform_driver_register(&wdt_driver);
+ 	if (ret)
+ 		return ret;
+ 
+-	pr_info("initialized. timeout=%d sec (nowayout=%d)\n",
+-		wdt_dev.timeout, nowayout);
++	wdt_pdev = platform_device_register_data(NULL, wdt_ids[chip].name,
++						 PLATFORM_DEVID_NONE, &pdata,
++						 sizeof(pdata));
++	if (IS_ERR(wdt_pdev)) {
++		platform_driver_unregister(&wdt_driver);
++		return PTR_ERR(wdt_pdev);
++	}
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static void __exit wdt_exit(void)
+ {
+-	watchdog_unregister_device(&wdt_dev);
++	platform_device_unregister(wdt_pdev);
++	platform_driver_unregister(&wdt_driver);
+ }
+ 
+ module_init(wdt_init);
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 3/9] watchdog: w83627hf_wdt: Use private driver data
+ structure
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:30 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-3-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Allocating a per-device data structure is a common practice in the Linux
+driver model. Add one that will be used to store chip-specific register
+offsets, and configuration.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 49 ++++++++++++++++++++++++-----------------
+ 1 file changed, 29 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index 993e65ce4447..72e167f37885 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -132,6 +132,11 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+ 
+ struct wdt_pdata {};
+ 
++struct w83627hf_data {
++	struct watchdog_device wdd;
++	struct watchdog_info info;
++};
++
+ static void superio_outb(int reg, int val)
+ {
+ 	outb(reg, WDT_EFER);
+@@ -331,10 +336,6 @@ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+  *	Kernel Interfaces
+  */
+ 
+-static struct watchdog_info wdt_info = {
+-	.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
+-};
+-
+ static const struct watchdog_ops wdt_ops = {
+ 	.owner = THIS_MODULE,
+ 	.start = wdt_start,
+@@ -343,14 +344,6 @@ static const struct watchdog_ops wdt_ops = {
+ 	.get_timeleft = wdt_get_time,
+ };
+ 
+-static struct watchdog_device wdt_dev = {
+-	.info = &wdt_info,
+-	.ops = &wdt_ops,
+-	.timeout = WATCHDOG_TIMEOUT,
+-	.min_timeout = 1,
+-	.max_timeout = 255,
+-};
+-
+ /*
+  *	The WDT needs to learn about soft shutdowns in order to
+  *	turn the timebomb registers off.
+@@ -471,28 +464,44 @@ static int wdt_probe(struct platform_device *pdev)
+ {
+ 	const struct platform_device_id *id = platform_get_device_id(pdev);
+ 	enum chips chip = id->driver_data;
++	struct watchdog_device *wdd;
++	struct w83627hf_data *data;
+ 	int ret;
+ 
+ 	pr_info("WDT driver for %s Super I/O chip initialising\n", id->name);
+ 
+-	snprintf(wdt_info.identity, sizeof(wdt_info.identity), "%s Watchdog",
+-		 id->name);
++	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	data->info.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE;
++	snprintf(data->info.identity, sizeof(data->info.identity),
++		 "%s Watchdog", id->name);
++
++	wdd = &data->wdd;
++
++	wdd->info = &data->info;
++	wdd->ops = &wdt_ops;
++	wdd->timeout = WATCHDOG_TIMEOUT;
++	wdd->min_timeout = 1;
++	wdd->max_timeout = 255;
+ 
+-	watchdog_init_timeout(&wdt_dev, timeout, NULL);
+-	watchdog_set_nowayout(&wdt_dev, nowayout);
+-	watchdog_stop_on_reboot(&wdt_dev);
++	watchdog_set_drvdata(wdd, data);
++	watchdog_init_timeout(wdd, timeout, NULL);
++	watchdog_set_nowayout(wdd, nowayout);
++	watchdog_stop_on_reboot(wdd);
+ 
+-	ret = w83627hf_init(&wdt_dev, chip);
++	ret = w83627hf_init(wdd, chip);
+ 	if (ret) {
+ 		pr_err("failed to initialize watchdog (err=%d)\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = devm_watchdog_register_device(&pdev->dev, &wdt_dev);
++	ret = devm_watchdog_register_device(&pdev->dev, wdd);
+ 	if (ret)
+ 		return ret;
+ 
+-	pr_info("initialized. timeout=%d sec (nowayout=%d)\n", wdt_dev.timeout,
++	pr_info("initialized. timeout=%d sec (nowayout=%d)\n", wdd->timeout,
+ 		nowayout);
+ 
+ 	return ret;
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 4/9] watchdog: w83627hf_wdt: Move register offsets into
+ driver data
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:31 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-4-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Register offsets for the watchdog timer, control, and status registers
+differ across Super I/O chip variants. Store them in the driver data
+instead of global variables.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 73 ++++++++++++++++++++++-------------------
+ 1 file changed, 39 insertions(+), 34 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index 72e167f37885..f5333c432198 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -42,9 +42,6 @@
+ #define WATCHDOG_TIMEOUT 60		/* 60 sec default timeout */
+ 
+ static int wdt_io;
+-static int cr_wdt_timeout;	/* WDT timeout register */
+-static int cr_wdt_control;	/* WDT control register */
+-static int cr_wdt_csr;		/* WDT control & status register */
+ static int wdt_cfg_enter = 0x87;/* key to unlock configuration space */
+ static int wdt_cfg_leave = 0xAA;/* key to lock configuration space */
+ 
+@@ -135,6 +132,11 @@ struct wdt_pdata {};
+ struct w83627hf_data {
+ 	struct watchdog_device wdd;
+ 	struct watchdog_info info;
++	struct {
++		int control;
++		int timeout;
++		int csr;
++	} reg;
+ };
+ 
+ static void superio_outb(int reg, int val)
+@@ -173,6 +175,7 @@ static void superio_exit(void)
+ 
+ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ {
++	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
+ 	int ret;
+ 	unsigned char t;
+ 
+@@ -212,10 +215,10 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 	case w83627dhg_p:
+ 		t = superio_inb(0x2D) & ~0x01; /* PIN77 -> WDT0# */
+ 		superio_outb(0x2D, t); /* set GPIO5 to WDT0 */
+-		t = superio_inb(cr_wdt_control);
++		t = superio_inb(data->reg.control);
+ 		t |= 0x02;	/* enable the WDTO# output low pulse
+ 				 * to the KBRST# pin */
+-		superio_outb(cr_wdt_control, t);
++		superio_outb(data->reg.control, t);
+ 		break;
+ 	case w83637hf:
+ 		break;
+@@ -244,48 +247,49 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 		 * Don't touch its configuration, and hope the BIOS
+ 		 * does the right thing.
+ 		 */
+-		t = superio_inb(cr_wdt_control);
++		t = superio_inb(data->reg.control);
+ 		t |= 0x02;	/* enable the WDTO# output low pulse
+ 				 * to the KBRST# pin */
+-		superio_outb(cr_wdt_control, t);
++		superio_outb(data->reg.control, t);
+ 		break;
+ 	default:
+ 		break;
+ 	}
+ 
+-	t = superio_inb(cr_wdt_timeout);
++	t = superio_inb(data->reg.timeout);
+ 	if (t != 0) {
+ 		if (early_disable) {
+ 			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
+-			superio_outb(cr_wdt_timeout, 0);
++			superio_outb(data->reg.timeout, 0);
+ 		} else {
+ 			pr_info("Watchdog already running. Resetting timeout to %d sec\n",
+ 				wdog->timeout);
+-			superio_outb(cr_wdt_timeout, wdog->timeout);
++			superio_outb(data->reg.timeout, wdog->timeout);
+ 			set_bit(WDOG_HW_RUNNING, &wdog->status);
+ 		}
+ 	}
+ 
+ 	/* set second mode & disable keyboard reset turning off watchdog */
+-	t = superio_inb(cr_wdt_control) &
++	t = superio_inb(data->reg.control) &
+ 	    ~(WDT_CTRL_MINUTE_MODE | WDT_CTRL_RISING_EDGE_KBD_RESET);
+-	superio_outb(cr_wdt_control, t);
++	superio_outb(data->reg.control, t);
+ 
+-	t = superio_inb(cr_wdt_csr);
++	t = superio_inb(data->reg.csr);
+ 	if (t & WDT_CSR_STATUS)
+ 		wdog->bootstatus |= WDIOF_CARDRESET;
+ 
+ 	/* reset status, disable keyboard & mouse interrupt turning off watchdog */
+ 	t &= ~(WDT_CSR_STATUS | WDT_CSR_KBD_INT_RESET | WDT_CSR_MOUSE_INT_RESET);
+-	superio_outb(cr_wdt_csr, t);
++	superio_outb(data->reg.csr, t);
+ 
+ 	superio_exit();
+ 
+ 	return 0;
+ }
+ 
+-static int wdt_set_time(unsigned int timeout)
++static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ {
++	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
+ 	int ret;
+ 
+ 	ret = superio_enter();
+@@ -293,7 +297,7 @@ static int wdt_set_time(unsigned int timeout)
+ 		return ret;
+ 
+ 	superio_select(W83627HF_LD_WDT);
+-	superio_outb(cr_wdt_timeout, timeout);
++	superio_outb(data->reg.timeout, timeout);
+ 	superio_exit();
+ 
+ 	return 0;
+@@ -301,12 +305,12 @@ static int wdt_set_time(unsigned int timeout)
+ 
+ static int wdt_start(struct watchdog_device *wdog)
+ {
+-	return wdt_set_time(wdog->timeout);
++	return wdt_set_time(wdog, wdog->timeout);
+ }
+ 
+ static int wdt_stop(struct watchdog_device *wdog)
+ {
+-	return wdt_set_time(0);
++	return wdt_set_time(wdog, 0);
+ }
+ 
+ static int wdt_set_timeout(struct watchdog_device *wdog, unsigned int timeout)
+@@ -318,6 +322,7 @@ static int wdt_set_timeout(struct watchdog_device *wdog, unsigned int timeout)
+ 
+ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+ {
++	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
+ 	unsigned int timeleft;
+ 	int ret;
+ 
+@@ -326,7 +331,7 @@ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+ 		return 0;
+ 
+ 	superio_select(W83627HF_LD_WDT);
+-	timeleft = superio_inb(cr_wdt_timeout);
++	timeleft = superio_inb(data->reg.timeout);
+ 	superio_exit();
+ 
+ 	return timeleft;
+@@ -354,10 +359,6 @@ static int wdt_find(int addr)
+ 	u8 val;
+ 	int ret;
+ 
+-	cr_wdt_timeout = W83627HF_WDT_TIMEOUT;
+-	cr_wdt_control = W83627HF_WDT_CONTROL;
+-	cr_wdt_csr = W836X7HF_WDT_CSR;
+-
+ 	ret = superio_enter();
+ 	if (ret)
+ 		return ret;
+@@ -372,13 +373,9 @@ static int wdt_find(int addr)
+ 		break;
+ 	case W83697HF_ID:
+ 		ret = w83697hf;
+-		cr_wdt_timeout = W83697HF_WDT_TIMEOUT;
+-		cr_wdt_control = W83697HF_WDT_CONTROL;
+ 		break;
+ 	case W83697UG_ID:
+ 		ret = w83697ug;
+-		cr_wdt_timeout = W83697HF_WDT_TIMEOUT;
+-		cr_wdt_control = W83697HF_WDT_CONTROL;
+ 		break;
+ 	case W83637HF_ID:
+ 		ret = w83637hf;
+@@ -433,9 +430,6 @@ static int wdt_find(int addr)
+ 		break;
+ 	case NCT6102_ID:
+ 		ret = nct6102;
+-		cr_wdt_timeout = NCT6102D_WDT_TIMEOUT;
+-		cr_wdt_control = NCT6102D_WDT_CONTROL;
+-		cr_wdt_csr = NCT6102D_WDT_CSR;
+ 		break;
+ 	case NCT6116_ID:
+ 		val = superio_inb(SIO_REG_DEVID + 1);
+@@ -443,10 +437,6 @@ static int wdt_find(int addr)
+ 			ret = nct6126;
+ 		else
+ 			ret = nct6116;
+-
+-		cr_wdt_timeout = NCT6102D_WDT_TIMEOUT;
+-		cr_wdt_control = NCT6102D_WDT_CONTROL;
+-		cr_wdt_csr = NCT6102D_WDT_CSR;
+ 		break;
+ 	case 0xff:
+ 		ret = -ENODEV;
+@@ -486,6 +476,21 @@ static int wdt_probe(struct platform_device *pdev)
+ 	wdd->min_timeout = 1;
+ 	wdd->max_timeout = 255;
+ 
++	data->reg.timeout = W83627HF_WDT_TIMEOUT;
++	data->reg.control = W83627HF_WDT_CONTROL;
++	data->reg.csr = W836X7HF_WDT_CSR;
++
++	if (chip == nct6102 || chip == nct6116 || chip == nct6126) {
++		data->reg.timeout = NCT6102D_WDT_TIMEOUT;
++		data->reg.control = NCT6102D_WDT_CONTROL;
++		data->reg.csr = NCT6102D_WDT_CSR;
++	}
++
++	if (chip == w83697hf || chip == w83697ug) {
++		data->reg.timeout = W83697HF_WDT_TIMEOUT;
++		data->reg.control = W83697HF_WDT_CONTROL;
++	}
++
+ 	watchdog_set_drvdata(wdd, data);
+ 	watchdog_init_timeout(wdd, timeout, NULL);
+ 	watchdog_set_nowayout(wdd, nowayout);
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 5/9] watchdog: w83627hf_wdt: Add Super I/O configuration
+ port as a platform device resource
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:32 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-5-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The Super I/O configuration port address is a global variable.
+Instead, use a platform device resource.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 146 +++++++++++++++++++++-------------------
+ 1 file changed, 77 insertions(+), 69 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index f5333c432198..6363d571182f 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -41,7 +41,6 @@
+ #define WATCHDOG_NAME "w83627hf/thf/hg/dhg WDT"
+ #define WATCHDOG_TIMEOUT 60		/* 60 sec default timeout */
+ 
+-static int wdt_io;
+ static int wdt_cfg_enter = 0x87;/* key to unlock configuration space */
+ static int wdt_cfg_leave = 0xAA;/* key to lock configuration space */
+ 
+@@ -76,11 +75,6 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+ #define SIO_REG_CONF_ADDR0	0x2E
+ #define SIO_REG_CONF_ADDR1	0x4E
+ 
+-#define WDT_EFER (wdt_io+0)   /* Extended Function Enable Registers */
+-#define WDT_EFIR (wdt_io+0)   /* Extended Function Index Register
+-							(same as EFER) */
+-#define WDT_EFDR (WDT_EFIR+1) /* Extended Function Data Register */
+-
+ #define W83627HF_LD_WDT		0x08
+ 
+ #define W83627HF_ID		0x52
+@@ -137,40 +131,41 @@ struct w83627hf_data {
+ 		int timeout;
+ 		int csr;
+ 	} reg;
++	int sioaddr;
+ };
+ 
+-static void superio_outb(int reg, int val)
++static void superio_outb(int base, int reg, int val)
+ {
+-	outb(reg, WDT_EFER);
+-	outb(val, WDT_EFDR);
++	outb(reg, base);
++	outb(val, base + 1);
+ }
+ 
+-static inline int superio_inb(int reg)
++static inline int superio_inb(int base, int reg)
+ {
+-	outb(reg, WDT_EFER);
+-	return inb(WDT_EFDR);
++	outb(reg, base);
++	return inb(base + 1);
+ }
+ 
+-static int superio_enter(void)
++static int superio_enter(int base)
+ {
+-	if (!request_muxed_region(wdt_io, 2, WATCHDOG_NAME))
++	if (!request_muxed_region(base, 2, WATCHDOG_NAME))
+ 		return -EBUSY;
+ 
+-	outb_p(wdt_cfg_enter, WDT_EFER); /* Enter extended function mode */
+-	outb_p(wdt_cfg_enter, WDT_EFER); /* Again according to manual */
++	outb_p(wdt_cfg_enter, base); /* Enter extended function mode */
++	outb_p(wdt_cfg_enter, base); /* Again according to manual */
+ 
+ 	return 0;
+ }
+ 
+-static void superio_select(int ld)
++static void superio_select(int base, int ld)
+ {
+-	superio_outb(SIO_REG_LDSEL, ld);
++	superio_outb(base, SIO_REG_LDSEL, ld);
+ }
+ 
+-static void superio_exit(void)
++static void superio_exit(int base)
+ {
+-	outb_p(wdt_cfg_leave, WDT_EFER); /* Leave extended function mode */
+-	release_region(wdt_io, 2);
++	outb_p(wdt_cfg_leave, base); /* Leave extended function mode */
++	release_region(base, 2);
+ }
+ 
+ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+@@ -179,52 +174,52 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 	int ret;
+ 	unsigned char t;
+ 
+-	ret = superio_enter();
++	ret = superio_enter(data->sioaddr);
+ 	if (ret)
+ 		return ret;
+ 
+-	superio_select(W83627HF_LD_WDT);
++	superio_select(data->sioaddr, W83627HF_LD_WDT);
+ 
+ 	/* set CR30 bit 0 to activate GPIO2 */
+-	t = superio_inb(SIO_REG_ENABLE);
++	t = superio_inb(data->sioaddr, SIO_REG_ENABLE);
+ 	if (!(t & 0x01))
+-		superio_outb(SIO_REG_ENABLE, t | 0x01);
++		superio_outb(data->sioaddr, SIO_REG_ENABLE, t | 0x01);
+ 
+ 	switch (chip) {
+ 	case w83627hf:
+ 	case w83627s:
+-		t = superio_inb(0x2B) & ~0x10;
+-		superio_outb(0x2B, t); /* set GPIO24 to WDT0 */
++		t = superio_inb(data->sioaddr, 0x2B) & ~0x10;
++		superio_outb(data->sioaddr, 0x2B, t); /* set GPIO24 to WDT0 */
+ 		break;
+ 	case w83697hf:
+ 		/* Set pin 119 to WDTO# mode (= CR29, WDT0) */
+-		t = superio_inb(0x29) & ~0x60;
++		t = superio_inb(data->sioaddr, 0x29) & ~0x60;
+ 		t |= 0x20;
+-		superio_outb(0x29, t);
++		superio_outb(data->sioaddr, 0x29, t);
+ 		break;
+ 	case w83697ug:
+ 		/* Set pin 118 to WDTO# mode */
+-		t = superio_inb(0x2b) & ~0x04;
+-		superio_outb(0x2b, t);
++		t = superio_inb(data->sioaddr, 0x2b) & ~0x04;
++		superio_outb(data->sioaddr, 0x2b, t);
+ 		break;
+ 	case w83627thf:
+-		t = (superio_inb(0x2B) & ~0x08) | 0x04;
+-		superio_outb(0x2B, t); /* set GPIO3 to WDT0 */
++		t = (superio_inb(data->sioaddr, 0x2B) & ~0x08) | 0x04;
++		superio_outb(data->sioaddr, 0x2B, t); /* set GPIO3 to WDT0 */
+ 		break;
+ 	case w83627dhg:
+ 	case w83627dhg_p:
+-		t = superio_inb(0x2D) & ~0x01; /* PIN77 -> WDT0# */
+-		superio_outb(0x2D, t); /* set GPIO5 to WDT0 */
+-		t = superio_inb(data->reg.control);
++		t = superio_inb(data->sioaddr, 0x2D) & ~0x01; /* PIN77 -> WDT0# */
++		superio_outb(data->sioaddr, 0x2D, t); /* set GPIO5 to WDT0 */
++		t = superio_inb(data->sioaddr, data->reg.control);
+ 		t |= 0x02;	/* enable the WDTO# output low pulse
+ 				 * to the KBRST# pin */
+-		superio_outb(data->reg.control, t);
++		superio_outb(data->sioaddr, data->reg.control, t);
+ 		break;
+ 	case w83637hf:
+ 		break;
+ 	case w83687thf:
+-		t = superio_inb(0x2C) & ~0x80; /* PIN47 -> WDT0# */
+-		superio_outb(0x2C, t);
++		t = superio_inb(data->sioaddr, 0x2C) & ~0x80; /* PIN47 -> WDT0# */
++		superio_outb(data->sioaddr, 0x2C, t);
+ 		break;
+ 	case w83627ehf:
+ 	case w83627uhg:
+@@ -247,42 +242,42 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 		 * Don't touch its configuration, and hope the BIOS
+ 		 * does the right thing.
+ 		 */
+-		t = superio_inb(data->reg.control);
++		t = superio_inb(data->sioaddr, data->reg.control);
+ 		t |= 0x02;	/* enable the WDTO# output low pulse
+ 				 * to the KBRST# pin */
+-		superio_outb(data->reg.control, t);
++		superio_outb(data->sioaddr, data->reg.control, t);
+ 		break;
+ 	default:
+ 		break;
+ 	}
+ 
+-	t = superio_inb(data->reg.timeout);
++	t = superio_inb(data->sioaddr, data->reg.timeout);
+ 	if (t != 0) {
+ 		if (early_disable) {
+ 			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
+-			superio_outb(data->reg.timeout, 0);
++			superio_outb(data->sioaddr, data->reg.timeout, 0);
+ 		} else {
+ 			pr_info("Watchdog already running. Resetting timeout to %d sec\n",
+ 				wdog->timeout);
+-			superio_outb(data->reg.timeout, wdog->timeout);
++			superio_outb(data->sioaddr, data->reg.timeout, wdog->timeout);
+ 			set_bit(WDOG_HW_RUNNING, &wdog->status);
+ 		}
+ 	}
+ 
+ 	/* set second mode & disable keyboard reset turning off watchdog */
+-	t = superio_inb(data->reg.control) &
++	t = superio_inb(data->sioaddr, data->reg.control) &
+ 	    ~(WDT_CTRL_MINUTE_MODE | WDT_CTRL_RISING_EDGE_KBD_RESET);
+-	superio_outb(data->reg.control, t);
++	superio_outb(data->sioaddr, data->reg.control, t);
+ 
+-	t = superio_inb(data->reg.csr);
++	t = superio_inb(data->sioaddr, data->reg.csr);
+ 	if (t & WDT_CSR_STATUS)
+ 		wdog->bootstatus |= WDIOF_CARDRESET;
+ 
+ 	/* reset status, disable keyboard & mouse interrupt turning off watchdog */
+ 	t &= ~(WDT_CSR_STATUS | WDT_CSR_KBD_INT_RESET | WDT_CSR_MOUSE_INT_RESET);
+-	superio_outb(data->reg.csr, t);
++	superio_outb(data->sioaddr, data->reg.csr, t);
+ 
+-	superio_exit();
++	superio_exit(data->sioaddr);
+ 
+ 	return 0;
+ }
+@@ -292,13 +287,13 @@ static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ 	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
+ 	int ret;
+ 
+-	ret = superio_enter();
++	ret = superio_enter(data->sioaddr);
+ 	if (ret)
+ 		return ret;
+ 
+-	superio_select(W83627HF_LD_WDT);
+-	superio_outb(data->reg.timeout, timeout);
+-	superio_exit();
++	superio_select(data->sioaddr, W83627HF_LD_WDT);
++	superio_outb(data->sioaddr, data->reg.timeout, timeout);
++	superio_exit(data->sioaddr);
+ 
+ 	return 0;
+ }
+@@ -326,13 +321,13 @@ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+ 	unsigned int timeleft;
+ 	int ret;
+ 
+-	ret = superio_enter();
++	ret = superio_enter(data->sioaddr);
+ 	if (ret)
+ 		return 0;
+ 
+-	superio_select(W83627HF_LD_WDT);
+-	timeleft = superio_inb(data->reg.timeout);
+-	superio_exit();
++	superio_select(data->sioaddr, W83627HF_LD_WDT);
++	timeleft = superio_inb(data->sioaddr, data->reg.timeout);
++	superio_exit(data->sioaddr);
+ 
+ 	return timeleft;
+ }
+@@ -359,11 +354,11 @@ static int wdt_find(int addr)
+ 	u8 val;
+ 	int ret;
+ 
+-	ret = superio_enter();
++	ret = superio_enter(addr);
+ 	if (ret)
+ 		return ret;
+-	superio_select(W83627HF_LD_WDT);
+-	val = superio_inb(SIO_REG_DEVID);
++	superio_select(addr, W83627HF_LD_WDT);
++	val = superio_inb(addr, SIO_REG_DEVID);
+ 	switch (val) {
+ 	case W83627HF_ID:
+ 		ret = w83627hf;
+@@ -432,7 +427,7 @@ static int wdt_find(int addr)
+ 		ret = nct6102;
+ 		break;
+ 	case NCT6116_ID:
+-		val = superio_inb(SIO_REG_DEVID + 1);
++		val = superio_inb(addr, SIO_REG_DEVID + 1);
+ 		if (val == NCT6126_VER_A_LOW_ID || val == NCT6126_VER_B_LOW_ID)
+ 			ret = nct6126;
+ 		else
+@@ -446,7 +441,7 @@ static int wdt_find(int addr)
+ 		pr_err("Unsupported chip ID: 0x%02x\n", val);
+ 		break;
+ 	}
+-	superio_exit();
++	superio_exit(addr);
+ 	return ret;
+ }
+ 
+@@ -456,10 +451,15 @@ static int wdt_probe(struct platform_device *pdev)
+ 	enum chips chip = id->driver_data;
+ 	struct watchdog_device *wdd;
+ 	struct w83627hf_data *data;
++	struct resource *res;
+ 	int ret;
+ 
+ 	pr_info("WDT driver for %s Super I/O chip initialising\n", id->name);
+ 
++	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
++	if (!res)
++		return -ENXIO;
++
+ 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+@@ -476,6 +476,7 @@ static int wdt_probe(struct platform_device *pdev)
+ 	wdd->min_timeout = 1;
+ 	wdd->max_timeout = 255;
+ 
++	data->sioaddr = res->start;
+ 	data->reg.timeout = W83627HF_WDT_TIMEOUT;
+ 	data->reg.control = W83627HF_WDT_CONTROL;
+ 	data->reg.csr = W836X7HF_WDT_CSR;
+@@ -579,17 +580,19 @@ static struct platform_device *wdt_pdev;
+ static int __init wdt_init(void)
+ {
+ 	struct wdt_pdata pdata;
++	struct resource res;
++	int sioaddr;
+ 	int ret;
+ 	int chip;
+ 
+ 	/* Apply system-specific quirks */
+ 	dmi_check_system(wdt_dmi_table);
+ 
+-	wdt_io = SIO_REG_CONF_ADDR0;
+-	chip = wdt_find(SIO_REG_CONF_ADDR0);
++	sioaddr = SIO_REG_CONF_ADDR0;
++	chip = wdt_find(sioaddr);
+ 	if (chip < 0) {
+-		wdt_io = SIO_REG_CONF_ADDR1;
+-		chip = wdt_find(SIO_REG_CONF_ADDR1);
++		sioaddr = SIO_REG_CONF_ADDR1;
++		chip = wdt_find(sioaddr);
+ 		if (chip < 0)
+ 			return chip;
+ 	}
+@@ -598,9 +601,14 @@ static int __init wdt_init(void)
+ 	if (ret)
+ 		return ret;
+ 
+-	wdt_pdev = platform_device_register_data(NULL, wdt_ids[chip].name,
+-						 PLATFORM_DEVID_NONE, &pdata,
+-						 sizeof(pdata));
++	res.name = "Super I/O port";
++	res.flags = IORESOURCE_IO;
++	res.start = sioaddr;
++	res.end = sioaddr + 1;
++
++	wdt_pdev = platform_device_register_resndata(NULL, wdt_ids[chip].name,
++						     PLATFORM_DEVID_NONE, &res,
++						     1, &pdata, sizeof(pdata));
+ 	if (IS_ERR(wdt_pdev)) {
+ 		platform_driver_unregister(&wdt_driver);
+ 		return PTR_ERR(wdt_pdev);
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 6/9] watchdog: w83627hf_wdt: Store Super I/O unlocking
+ sequence in platform data
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:33 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-6-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Instead of using two global variable, store the unlocking sequence in the
+platform data.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 58 +++++++++++++++++++++++++----------------
+ 1 file changed, 35 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index 6363d571182f..fed05fcf82bb 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -41,9 +41,6 @@
+ #define WATCHDOG_NAME "w83627hf/thf/hg/dhg WDT"
+ #define WATCHDOG_TIMEOUT 60		/* 60 sec default timeout */
+ 
+-static int wdt_cfg_enter = 0x87;/* key to unlock configuration space */
+-static int wdt_cfg_leave = 0xAA;/* key to lock configuration space */
+-
+ enum chips { w83627hf, w83627s, w83697hf, w83697ug, w83637hf, w83627thf,
+ 	     w83687thf, w83627ehf, w83627dhg, w83627uhg, w83667hg, w83627dhg_p,
+ 	     w83667hg_b, nct6775, nct6776, nct6779, nct6791, nct6792, nct6793,
+@@ -121,7 +118,10 @@ MODULE_PARM_DESC(early_disable, "Disable watchdog at boot time (default=0)");
+ #define WDT_CTRL_RISING_EDGE_KBD_RESET	BIT(2)
+ #define WDT_CTRL_MINUTE_MODE		BIT(3)
+ 
+-struct wdt_pdata {};
++struct wdt_pdata {
++	int siocfg_enter;
++	int siocfg_leave;
++};
+ 
+ struct w83627hf_data {
+ 	struct watchdog_device wdd;
+@@ -132,6 +132,8 @@ struct w83627hf_data {
+ 		int csr;
+ 	} reg;
+ 	int sioaddr;
++	int siocfg_enter;
++	int siocfg_leave;
+ };
+ 
+ static void superio_outb(int base, int reg, int val)
+@@ -146,13 +148,13 @@ static inline int superio_inb(int base, int reg)
+ 	return inb(base + 1);
+ }
+ 
+-static int superio_enter(int base)
++static int superio_enter(int base, int enter)
+ {
+ 	if (!request_muxed_region(base, 2, WATCHDOG_NAME))
+ 		return -EBUSY;
+ 
+-	outb_p(wdt_cfg_enter, base); /* Enter extended function mode */
+-	outb_p(wdt_cfg_enter, base); /* Again according to manual */
++	outb_p(enter, base); /* Enter extended function mode */
++	outb_p(enter, base); /* Again according to manual */
+ 
+ 	return 0;
+ }
+@@ -162,9 +164,9 @@ static void superio_select(int base, int ld)
+ 	superio_outb(base, SIO_REG_LDSEL, ld);
+ }
+ 
+-static void superio_exit(int base)
++static void superio_exit(int base, int leave)
+ {
+-	outb_p(wdt_cfg_leave, base); /* Leave extended function mode */
++	outb_p(leave, base); /* Leave extended function mode */
+ 	release_region(base, 2);
+ }
+ 
+@@ -174,7 +176,7 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 	int ret;
+ 	unsigned char t;
+ 
+-	ret = superio_enter(data->sioaddr);
++	ret = superio_enter(data->sioaddr, data->siocfg_enter);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -277,7 +279,7 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 	t &= ~(WDT_CSR_STATUS | WDT_CSR_KBD_INT_RESET | WDT_CSR_MOUSE_INT_RESET);
+ 	superio_outb(data->sioaddr, data->reg.csr, t);
+ 
+-	superio_exit(data->sioaddr);
++	superio_exit(data->sioaddr, data->siocfg_leave);
+ 
+ 	return 0;
+ }
+@@ -287,13 +289,13 @@ static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ 	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
+ 	int ret;
+ 
+-	ret = superio_enter(data->sioaddr);
++	ret = superio_enter(data->sioaddr, data->siocfg_enter);
+ 	if (ret)
+ 		return ret;
+ 
+ 	superio_select(data->sioaddr, W83627HF_LD_WDT);
+ 	superio_outb(data->sioaddr, data->reg.timeout, timeout);
+-	superio_exit(data->sioaddr);
++	superio_exit(data->sioaddr, data->siocfg_leave);
+ 
+ 	return 0;
+ }
+@@ -321,13 +323,13 @@ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+ 	unsigned int timeleft;
+ 	int ret;
+ 
+-	ret = superio_enter(data->sioaddr);
++	ret = superio_enter(data->sioaddr, data->siocfg_enter);
+ 	if (ret)
+ 		return 0;
+ 
+ 	superio_select(data->sioaddr, W83627HF_LD_WDT);
+ 	timeleft = superio_inb(data->sioaddr, data->reg.timeout);
+-	superio_exit(data->sioaddr);
++	superio_exit(data->sioaddr, data->siocfg_leave);
+ 
+ 	return timeleft;
+ }
+@@ -349,12 +351,12 @@ static const struct watchdog_ops wdt_ops = {
+  *	turn the timebomb registers off.
+  */
+ 
+-static int wdt_find(int addr)
++static int wdt_find(int addr, int enter, int leave)
+ {
+ 	u8 val;
+ 	int ret;
+ 
+-	ret = superio_enter(addr);
++	ret = superio_enter(addr, enter);
+ 	if (ret)
+ 		return ret;
+ 	superio_select(addr, W83627HF_LD_WDT);
+@@ -441,13 +443,14 @@ static int wdt_find(int addr)
+ 		pr_err("Unsupported chip ID: 0x%02x\n", val);
+ 		break;
+ 	}
+-	superio_exit(addr);
++	superio_exit(addr, leave);
+ 	return ret;
+ }
+ 
+ static int wdt_probe(struct platform_device *pdev)
+ {
+ 	const struct platform_device_id *id = platform_get_device_id(pdev);
++	const struct wdt_pdata *pdata = pdev->dev.platform_data;
+ 	enum chips chip = id->driver_data;
+ 	struct watchdog_device *wdd;
+ 	struct w83627hf_data *data;
+@@ -477,6 +480,8 @@ static int wdt_probe(struct platform_device *pdev)
+ 	wdd->max_timeout = 255;
+ 
+ 	data->sioaddr = res->start;
++	data->siocfg_enter = pdata->siocfg_enter;
++	data->siocfg_leave = pdata->siocfg_leave;
+ 	data->reg.timeout = W83627HF_WDT_TIMEOUT;
+ 	data->reg.control = W83627HF_WDT_CONTROL;
+ 	data->reg.csr = W836X7HF_WDT_CSR;
+@@ -520,12 +525,16 @@ static int wdt_probe(struct platform_device *pdev)
+  */
+ static int __init wdt_use_alt_key(const struct dmi_system_id *d)
+ {
+-	wdt_cfg_enter = 0x88;
+-	wdt_cfg_leave = 0xBB;
++	struct wdt_pdata *pdata = d->driver_data;
++
++	pdata->siocfg_enter = 0x88;
++	pdata->siocfg_leave = 0xBB;
+ 
+ 	return 0;
+ }
+ 
++static struct wdt_pdata pdata;
++
+ static const struct dmi_system_id wdt_dmi_table[] __initconst = {
+ 	{
+ 		.matches = {
+@@ -535,6 +544,7 @@ static const struct dmi_system_id wdt_dmi_table[] __initconst = {
+ 			DMI_EXACT_MATCH(DMI_BOARD_NAME, "SHARKBAY"),
+ 		},
+ 		.callback = wdt_use_alt_key,
++		.driver_data = &pdata,
+ 	},
+ 	{}
+ };
+@@ -579,20 +589,22 @@ static struct platform_device *wdt_pdev;
+ 
+ static int __init wdt_init(void)
+ {
+-	struct wdt_pdata pdata;
+ 	struct resource res;
+ 	int sioaddr;
+ 	int ret;
+ 	int chip;
+ 
++	pdata.siocfg_enter = 0x87;
++	pdata.siocfg_leave = 0xAA;
++
+ 	/* Apply system-specific quirks */
+ 	dmi_check_system(wdt_dmi_table);
+ 
+ 	sioaddr = SIO_REG_CONF_ADDR0;
+-	chip = wdt_find(sioaddr);
++	chip = wdt_find(sioaddr, pdata.siocfg_enter, pdata.siocfg_leave);
+ 	if (chip < 0) {
+ 		sioaddr = SIO_REG_CONF_ADDR1;
+-		chip = wdt_find(sioaddr);
++		chip = wdt_find(sioaddr, pdata.siocfg_enter, pdata.siocfg_leave);
+ 		if (chip < 0)
+ 			return chip;
+ 	}
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 7/9] watchdog: w83627hf_wdt: Add minute mode counting
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:34 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-7-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+All of the chips supported by the driver can be set to minute mode,
+allowing timeout value up to 255 minutes.
+Add it to the driver.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 70 +++++++++++++++++++++++++++++++----------
+ 1 file changed, 53 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index fed05fcf82bb..90d41f21aa5e 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -40,6 +40,7 @@
+ 
+ #define WATCHDOG_NAME "w83627hf/thf/hg/dhg WDT"
+ #define WATCHDOG_TIMEOUT 60		/* 60 sec default timeout */
++#define WATCHDOG_MAX_TIMEOUT (255 * 60)
+ 
+ enum chips { w83627hf, w83627s, w83697hf, w83697ug, w83637hf, w83627thf,
+ 	     w83687thf, w83627ehf, w83627dhg, w83627uhg, w83667hg, w83627dhg_p,
+@@ -49,7 +50,8 @@ enum chips { w83627hf, w83627s, w83697hf, w83697ug, w83637hf, w83627thf,
+ static int timeout;			/* in seconds */
+ module_param(timeout, int, 0);
+ MODULE_PARM_DESC(timeout,
+-		"Watchdog timeout in seconds. 1 <= timeout <= 255, default="
++		"Watchdog timeout in seconds. 1 <= timeout <= "
++				__MODULE_STRING(WATCHDOG_MAX_TIMEOUT) ", default="
+ 				__MODULE_STRING(WATCHDOG_TIMEOUT) ".");
+ 
+ static bool nowayout = WATCHDOG_NOWAYOUT;
+@@ -134,6 +136,9 @@ struct w83627hf_data {
+ 	int sioaddr;
+ 	int siocfg_enter;
+ 	int siocfg_leave;
++	bool minute_mode;
++	u8 early_timer_val;
++	u8 timer_val;
+ };
+ 
+ static void superio_outb(int base, int reg, int val)
+@@ -253,22 +258,11 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ 		break;
+ 	}
+ 
+-	t = superio_inb(data->sioaddr, data->reg.timeout);
+-	if (t != 0) {
+-		if (early_disable) {
+-			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
+-			superio_outb(data->sioaddr, data->reg.timeout, 0);
+-		} else {
+-			pr_info("Watchdog already running. Resetting timeout to %d sec\n",
+-				wdog->timeout);
+-			superio_outb(data->sioaddr, data->reg.timeout, wdog->timeout);
+-			set_bit(WDOG_HW_RUNNING, &wdog->status);
+-		}
+-	}
++	data->early_timer_val = superio_inb(data->sioaddr, data->reg.timeout);
+ 
+-	/* set second mode & disable keyboard reset turning off watchdog */
++	/* disable keyboard reset turning off watchdog */
+ 	t = superio_inb(data->sioaddr, data->reg.control) &
+-	    ~(WDT_CTRL_MINUTE_MODE | WDT_CTRL_RISING_EDGE_KBD_RESET);
++	    ~WDT_CTRL_RISING_EDGE_KBD_RESET;
+ 	superio_outb(data->sioaddr, data->reg.control, t);
+ 
+ 	t = superio_inb(data->sioaddr, data->reg.csr);
+@@ -287,6 +281,7 @@ static int w83627hf_init(struct watchdog_device *wdog, enum chips chip)
+ static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ {
+ 	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
++	unsigned char ctrl;
+ 	int ret;
+ 
+ 	ret = superio_enter(data->sioaddr, data->siocfg_enter);
+@@ -294,6 +289,15 @@ static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ 		return ret;
+ 
+ 	superio_select(data->sioaddr, W83627HF_LD_WDT);
++
++	ctrl = superio_inb(data->sioaddr, data->reg.control);
++
++	if (data->minute_mode)
++		ctrl |= WDT_CTRL_MINUTE_MODE;
++	else
++		ctrl &= ~WDT_CTRL_MINUTE_MODE;
++
++	superio_outb(data->sioaddr, data->reg.control, ctrl);
+ 	superio_outb(data->sioaddr, data->reg.timeout, timeout);
+ 	superio_exit(data->sioaddr, data->siocfg_leave);
+ 
+@@ -302,7 +306,9 @@ static int wdt_set_time(struct watchdog_device *wdog, unsigned int timeout)
+ 
+ static int wdt_start(struct watchdog_device *wdog)
+ {
+-	return wdt_set_time(wdog, wdog->timeout);
++	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
++
++	return wdt_set_time(wdog, data->timer_val);
+ }
+ 
+ static int wdt_stop(struct watchdog_device *wdog)
+@@ -312,6 +318,17 @@ static int wdt_stop(struct watchdog_device *wdog)
+ 
+ static int wdt_set_timeout(struct watchdog_device *wdog, unsigned int timeout)
+ {
++	struct w83627hf_data *data = watchdog_get_drvdata(wdog);
++
++	if (timeout > 255) {
++		data->minute_mode = true;
++		data->timer_val = DIV_ROUND_UP(timeout, 60);
++		timeout = data->timer_val * 60;
++	} else {
++		data->minute_mode = false;
++		data->timer_val = timeout;
++	}
++
+ 	wdog->timeout = timeout;
+ 
+ 	return 0;
+@@ -329,6 +346,8 @@ static unsigned int wdt_get_time(struct watchdog_device *wdog)
+ 
+ 	superio_select(data->sioaddr, W83627HF_LD_WDT);
+ 	timeleft = superio_inb(data->sioaddr, data->reg.timeout);
++	if (data->minute_mode)
++		timeleft *= 60;
+ 	superio_exit(data->sioaddr, data->siocfg_leave);
+ 
+ 	return timeleft;
+@@ -477,7 +496,7 @@ static int wdt_probe(struct platform_device *pdev)
+ 	wdd->ops = &wdt_ops;
+ 	wdd->timeout = WATCHDOG_TIMEOUT;
+ 	wdd->min_timeout = 1;
+-	wdd->max_timeout = 255;
++	wdd->max_timeout = WATCHDOG_MAX_TIMEOUT;
+ 
+ 	data->sioaddr = res->start;
+ 	data->siocfg_enter = pdata->siocfg_enter;
+@@ -502,12 +521,29 @@ static int wdt_probe(struct platform_device *pdev)
+ 	watchdog_set_nowayout(wdd, nowayout);
+ 	watchdog_stop_on_reboot(wdd);
+ 
++	wdt_set_timeout(wdd, wdd->timeout);
++
+ 	ret = w83627hf_init(wdd, chip);
+ 	if (ret) {
+ 		pr_err("failed to initialize watchdog (err=%d)\n", ret);
+ 		return ret;
+ 	}
+ 
++	if (data->early_timer_val) {
++		if (early_disable) {
++			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
++			ret = wdt_stop(wdd);
++		} else {
++			pr_info("Watchdog already running. Resetting timeout to %d sec\n",
++				wdd->timeout);
++			ret = wdt_start(wdd);
++			set_bit(WDOG_HW_RUNNING, &wdd->status);
++		}
++
++		if (ret)
++			return ret;
++	}
++
+ 	ret = devm_watchdog_register_device(&pdev->dev, wdd);
+ 	if (ret)
+ 		return ret;
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 8/9] watchdog: w83627hf_wdt: Report all initialization
+ failures in probe
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:35 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-8-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The driver currently logs an error only if the chip initialization
+fails. Extend the error reporting to all failure paths in probe to
+improve diagnostics.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index 90d41f21aa5e..cf1a3fb3a6fd 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -479,12 +479,16 @@ static int wdt_probe(struct platform_device *pdev)
+ 	pr_info("WDT driver for %s Super I/O chip initialising\n", id->name);
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
+-	if (!res)
+-		return -ENXIO;
++	if (!res) {
++		ret = -ENXIO;
++		goto fail;
++	}
+ 
+ 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+-	if (!data)
+-		return -ENOMEM;
++	if (!data) {
++		ret = -ENOMEM;
++		goto fail;
++	}
+ 
+ 	data->info.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE;
+ 	snprintf(data->info.identity, sizeof(data->info.identity),
+@@ -524,10 +528,8 @@ static int wdt_probe(struct platform_device *pdev)
+ 	wdt_set_timeout(wdd, wdd->timeout);
+ 
+ 	ret = w83627hf_init(wdd, chip);
+-	if (ret) {
+-		pr_err("failed to initialize watchdog (err=%d)\n", ret);
+-		return ret;
+-	}
++	if (ret)
++		goto fail;
+ 
+ 	if (data->early_timer_val) {
+ 		if (early_disable) {
+@@ -541,16 +543,19 @@ static int wdt_probe(struct platform_device *pdev)
+ 		}
+ 
+ 		if (ret)
+-			return ret;
++			goto fail;
+ 	}
+ 
+ 	ret = devm_watchdog_register_device(&pdev->dev, wdd);
+ 	if (ret)
+-		return ret;
++		goto fail;
+ 
+ 	pr_info("initialized. timeout=%d sec (nowayout=%d)\n", wdd->timeout,
+ 		nowayout);
+ 
++	return 0;
++fail:
++	pr_err("failed to initialize watchdog (err=%d)\n", ret);
+ 	return ret;
+ }
+ 
+
+-- 
+2.55.0
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH 9/9] watchdog: w83627hf_wdt: Use dev_* logging instead of
+ pr_*
+From: Paul Louvel <paul.louvel@bootlin.com>
+Date: Sat, 25 Jul 2026 12:29:36 +0200
+Message-Id: <20260725-w83627hf_wdt-improvements-v1-9-4e9a1b4e8297@bootlin.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+The pr_* logging functions do not identify which device generated a
+message. Use dev_* logging functions instead.
+Since the device name is printed with this family of function, remove
+the duplicate name in the initialization message.
+
+Signed-off-by: Paul Louvel <paul.louvel@bootlin.com>
+---
+ drivers/watchdog/w83627hf_wdt.c | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/watchdog/w83627hf_wdt.c b/drivers/watchdog/w83627hf_wdt.c
+index cf1a3fb3a6fd..83c5d8b52b13 100644
+--- a/drivers/watchdog/w83627hf_wdt.c
++++ b/drivers/watchdog/w83627hf_wdt.c
+@@ -471,12 +471,13 @@ static int wdt_probe(struct platform_device *pdev)
+ 	const struct platform_device_id *id = platform_get_device_id(pdev);
+ 	const struct wdt_pdata *pdata = pdev->dev.platform_data;
+ 	enum chips chip = id->driver_data;
++	struct device *dev = &pdev->dev;
+ 	struct watchdog_device *wdd;
+ 	struct w83627hf_data *data;
+ 	struct resource *res;
+ 	int ret;
+ 
+-	pr_info("WDT driver for %s Super I/O chip initialising\n", id->name);
++	dev_info(dev, "WDT driver initialising\n");
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
+ 	if (!res) {
+@@ -533,11 +534,11 @@ static int wdt_probe(struct platform_device *pdev)
+ 
+ 	if (data->early_timer_val) {
+ 		if (early_disable) {
+-			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
++			dev_warn(dev, "Stopping previously enabled watchdog until userland kicks in\n");
+ 			ret = wdt_stop(wdd);
+ 		} else {
+-			pr_info("Watchdog already running. Resetting timeout to %d sec\n",
+-				wdd->timeout);
++			dev_info(dev, "Watchdog already running. Resetting timeout to %d sec\n",
++				 wdd->timeout);
+ 			ret = wdt_start(wdd);
+ 			set_bit(WDOG_HW_RUNNING, &wdd->status);
+ 		}
+@@ -550,13 +551,12 @@ static int wdt_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto fail;
+ 
+-	pr_info("initialized. timeout=%d sec (nowayout=%d)\n", wdd->timeout,
+-		nowayout);
++	dev_info(dev, "initialized. timeout=%d sec (nowayout=%d)\n",
++		 wdd->timeout, nowayout);
+ 
+ 	return 0;
+ fail:
+-	pr_err("failed to initialize watchdog (err=%d)\n", ret);
+-	return ret;
++	return dev_err_probe(dev, ret, "failed to initialize watchdog\n");
+ }
+ 
+ /*
+
+-- 
+2.55.0
+

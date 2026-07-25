@@ -74,6 +74,17 @@ class CFMCalibrationReport(BaseModel):
 
     ``production_gate_criteria_met`` is False by default and requires all 7
     gate criteria (Plan §8) plus Governance Auditor + Arbiter approval.
+
+    Correlation significance fields (Track-B.7 D3 fix):
+    - ``pearson_t_stat``: t-statistic for H0: ρ=0; t = r * sqrt(n-2) / sqrt(1-r^2).
+      None when n < 3 or variance is zero.
+    - ``correlation_significant``: True when |t| exceeds the critical value for
+      df = n-2 at α=0.05 (two-tailed).  None when t-stat could not be computed.
+
+    Minimum samples for a reliable Pearson r: at least 50. With n < 50 the
+    correlation has insufficient statistical power — the gate key
+    ``correlation_min_samples_met`` will be False and callers must treat any r
+    as exploratory only.
     """
 
     series_count: int = 0
@@ -90,6 +101,9 @@ class CFMCalibrationReport(BaseModel):
     gate_criteria_status: dict[str, bool] = Field(default_factory=dict)
     # Track-B.6: per-claim REVIEW_HISTORY factor distribution (claim → factor score)
     review_history_distribution: dict[str, float] = Field(default_factory=dict)
+    # Track-B.7 D3: significance metadata for cfm_vs_llm_correlation
+    pearson_t_stat: float | None = None
+    correlation_significant: bool | None = None
 
 
 __all__ = [

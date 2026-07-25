@@ -49,6 +49,71 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     return num / (denom_x * denom_y)
 
 
+# Minimum sample size required for Pearson r to be actionable (Track-B.7 D3).
+# With n < 50 there is insufficient statistical power to distinguish true
+# CFM-vs-LLM divergence from noise; the gate key ``correlation_min_samples_met``
+# will be False below this threshold.
+_PEARSON_MIN_SAMPLES = 50
+
+# Critical t-values for two-tailed α=0.05, keyed by degrees-of-freedom.
+# Pre-computed for common df buckets so the implementation stays deterministic
+# (Sec-40: no datetime.now / uuid / random).
+# For df > 120 we use the large-n asymptote 1.960.
+_T_CRIT_05: dict[int, float] = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+    6: 2.447,  7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+    11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
+    16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+    25: 2.060, 30: 2.042, 40: 2.021, 60: 2.000, 80: 1.990,
+    100: 1.984, 120: 1.980,
+}
+
+
+def _t_critical_05(df: int) -> float:
+    """Two-tailed t-critical value at α=0.05 for given degrees of freedom.
+
+    Uses the pre-computed table; falls back to the nearest lower df in the
+    table when exact df is not present.  For df > 120 returns 1.960.
+    """
+    if df <= 0:
+        return float("inf")
+    if df > 120:
+        return 1.960
+    # Find exact match or largest key <= df
+    best = 1
+    for key in _T_CRIT_05:
+        if key <= df and key > best:
+            best = key
+    return _T_CRIT_05[best]
+
+
+def _pearson_t_stat(r: float, n: int) -> float | None:
+    """t-statistic for the Pearson r test of H0: ρ=0.
+
+    t = r * sqrt(n-2) / sqrt(1 - r^2).
+    Returns None when n < 3 or |r| is effectively 1 (no finite t).
+    """
+    if n < 3:
+        return None
+    r2 = r * r
+    if r2 >= 1.0 - 1e-10:
+        return None
+    return r * ((n - 2) ** 0.5) / ((1.0 - r2) ** 0.5)
+
+
+def _pearson_significant(r: float, n: int) -> bool | None:
+    """Return True when Pearson r is statistically significant at α=0.05.
+
+    Returns None when the t-stat cannot be computed (n < 3 or |r| ≈ 1).
+    """
+    t = _pearson_t_stat(r, n)
+    if t is None:
+        return None
+    df = n - 2
+    t_crit = _t_critical_05(df)
+    return abs(t) >= t_crit
+
+
 def _mean_abs_error(xs: list[float], ys: list[float]) -> float | None:
     if not xs:
         return None
@@ -145,6 +210,8 @@ class CFMCalibrator:
                 "fp_estimate_acceptable": False,
                 "no_safety_floor_violation": True,
                 "browser_api_cli_validated": False,
+                "correlation_min_samples_met": False,
+                "correlation_significant": False,
             }
             return CFMCalibrationReport(
                 series_count=series_count,
@@ -249,6 +316,12 @@ class CFMCalibrator:
             "fp_estimate_acceptable": (fp_est is not None and fp_est <= 0.40),
             "no_safety_floor_violation": True,  # Validated by Safety Floor checks separately
             "browser_api_cli_validated": False,  # Set externally after B6 validation
+            # Track-B.7 D3: significance gates — correlation is only actionable when
+            # n >= 50 AND the t-test is significant at α=0.05.
+            "correlation_min_samples_met": samples >= _PEARSON_MIN_SAMPLES,
+            "correlation_significant": bool(
+                corr is not None and _pearson_significant(corr, samples) is True
+            ),
         }
         # Only shadow stays — production_gate_criteria_met not auto-set
         all_met = False  # Governance Auditor + Arbiter approval required externally
@@ -280,7 +353,9 @@ class CFMCalibrator:
             recommendation=recommendation,
             gate_criteria_status=gate,
             review_history_distribution=rh_distribution,
+            pearson_t_stat=_pearson_t_stat(corr, samples) if corr is not None else None,
+            correlation_significant=_pearson_significant(corr, samples) if corr is not None else None,
         )
 
 
-__all__ = ["CFMCalibrator"]
+__all__ = ["CFMCalibrator", "_pearson_t_stat", "_pearson_significant", "_t_critical_05", "_PEARSON_MIN_SAMPLES"]
