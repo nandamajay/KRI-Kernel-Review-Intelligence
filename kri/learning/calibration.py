@@ -145,12 +145,18 @@ def _build_evidence_graph_for_calibration(
             rejected.append(e.patch_id)
 
         ev_id = "calib:" + _hl.sha256(f"calib:{e.entry_id}".encode()).hexdigest()[:12]
+        # lore.kernel.org URLs are permanent authenticated public records;
+        # review_discussion / maintainer_ack / maintainer_nack are verified
+        # by their presence in the archive (mirrors lore_evidence_for_claim()
+        # in ingestion.py).  accepted_patch / rejected_patch are external
+        # judgments treated as unverified signals only.
+        _is_verified = e.evidence_type in ("review_discussion", "maintainer_ack", "maintainer_nack")
         ev = EvidenceModel(
             evidence_id=ev_id,
             source_type=source_type,
             summary=f"{e.extracted_claim}: {e.reviewer_text[:60]}",
             provenance=e.provenance,
-            verified=False,
+            verified=_is_verified,
             strength=e.provenance.source_confidence or 0.3,
         )
         evidence_nodes.append(ev)
