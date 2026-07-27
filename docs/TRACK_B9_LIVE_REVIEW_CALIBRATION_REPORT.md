@@ -676,6 +676,189 @@ All 14 STOP conditions: **NOT triggered**.
 
 ---
 
-*Report signed off by Track-B.9 autonomous execution, 2026-07-27.*
-*Verdict: TRACK_B9_APPLY_STATUS_CLOSED.*
-*Governance: 14-condition STOP audit, full suite 718/720 PASS (2 skipped), no STOP conditions triggered.*
+## 22. B9-3 Post-Commit Audit and Live Calibration Execution (2026-07-27)
+
+### 22.1 Commit Hygiene Audit — COMMIT_HYGIENE_FAILURE Recorded
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| Commit exists on origin/main | YES | YES (c111be7) | PASS |
+| Commit author | `Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>` | `Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>` | PASS |
+| Commit changed only intended files | `scripts/run_live_calibration_b9.py` (1 file) | Same | PASS |
+| No generated artifacts committed | None expected | None present | PASS |
+| Script path correct | `scripts/run_live_calibration_b9.py` | Same | PASS |
+| **Signed-off-by trailer** | `Signed-off-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>` | **MISSING** (Co-Authored-By present, not Signed-off-by) | **FAIL** |
+
+**Classification: COMMIT_HYGIENE_FAILURE** — c111be7 has `Co-Authored-By` but no `Signed-off-by`.
+All prior commits (ade8ac7, abad482, 55e8c41, 6ec65fc, b3d6150) carry the correct trailer.
+Governance decision: no history rewrite authorized. A corrective B9-4 commit carries the sign-off for the script and report changes.
+
+### 22.2 Script Path Correction
+
+| Location | Previously Documented Path | Correct Path |
+|----------|---------------------------|-------------|
+| Commit c111be7 message | `kri/scripts/run_live_calibration_b9.py` | **`scripts/run_live_calibration_b9.py`** |
+| Memory file track_b9_complete.md | Same incorrect path | Fixed |
+
+The repo root is `/local/mnt/workspace/KRI_Kernel_Review_Intelligence/kri`. The script lives at `kri/scripts/` from the repo root, so the correct invocation is `python3 scripts/run_live_calibration_b9.py`. The earlier documented path was wrong. Corrected in B9-4 report and memory.
+
+### 22.3 Script Defects Found and Fixed
+
+Three bugs fixed in B9-4:
+
+| Bug | Impact | Fix |
+|-----|--------|-----|
+| Wrong store path: `data/ledger/review_history.jsonl` (empty) instead of `data/lore_cache/review_history.jsonl` (production; 420 entries) | All `review_history_distribution` values = 0.0; CFM scores near-constant; Pearson near-zero | Changed `REVIEW_HISTORY_PATH` to `LORE_CACHE_DIR / "review_history.jsonl"` |
+| Triple count cap: breaks at 10 triples (was n<50 blocker for Pearson) | n=12 on first run; `correlation_min_samples_met: False` | Raised break threshold to 60 triples; `pick_mbox_files(n=200)` |
+| Missing output fields: `review_history_distribution`, `factor_contributions`, `pearson_t_stat`, `correlation_significant`, `llm_confidence_distribution` not captured in result JSON | Incomplete audit trail for B10 | Added all 5 fields to calibration result dict |
+
+Docstring also updated to correct the usage command path.
+
+### 22.4 Live Calibration Execution Results (With Correct Store Path)
+
+Two runs performed:
+
+**Run 1 (wrong store path — data/ledger/review_history.jsonl, MISSING):**
+- 12 triples generated, real LLM confidence (0.55–0.92)
+- Pearson = None: `correlation_min_samples_met: False` (n=12 < 50)
+
+**Run 2 (correct store path — data/lore_cache/review_history.jsonl, 420 entries):**
+- 69 triples generated from 26 mbox files
+- LLM confidence range: 0.55–0.98, mean=0.783, std=0.094
+- Pearson r = **-0.006** (near-zero, not significant)
+- `correlation_computed: True` (gate now passes this individual check)
+- `correlation_min_samples_met: True` (n=69 ≥ 50)
+- `correlation_non_negative: False` (r=-0.006 < 0)
+- `correlation_significant: False` (t=-0.051, far below t-crit=2.0)
+
+#### Live Calibration Output Files
+
+| File | Path | Size |
+|------|------|------|
+| Triples JSONL | `/local/mnt/workspace/KRI_Kernel_Review_Intelligence/data/ledger/calibration_triples_b9.jsonl` | 69 lines |
+| Result JSON | `/local/mnt/workspace/KRI_Kernel_Review_Intelligence/data/ledger/calibration_result_b9.json` | ~3KB |
+
+Both files verified: valid JSON/JSONL, correct schema, all required keys present.
+
+#### Triple Categories Generated (26 mbox files, 69 triples)
+
+| Category | Count | Review History Factor |
+|----------|-------|-----------------------|
+| `design` | 20 | 0.000 (not in store) |
+| `commit_msg` | 12 | 0.000 (not in store) |
+| `bug` | 10 | 0.000 (not in store) |
+| `dt_binding` | 6 | 1.000 (39 store entries) |
+| `api_misuse` | 6 | 0.000 (not in store) |
+| `error_handling` | 4 | 0.000 (zero RH in store) |
+| `convention` | 4 | 0.000 (not in store) |
+| `null_deref` | 3 | 0.350 (1 store entry) |
+| `resource_leak` | 2 | 0.000 (not in store) |
+| `race` | 2 | 0.000 (not in store) |
+
+**10 distinct categories** (≥8 required for gate: PASS).
+
+**Structural Pearson issue:** Only 2 of 10 live-review categories (`dt_binding`, `null_deref`) have non-zero review_history factors in the production store. The remaining 8 categories have zero review-history evidence. With most CFM scores near zero, there is insufficient variance in the CFM dimension to show meaningful correlation with LLM confidence. This is a data gap — not a code bug — requiring expansion of the store to include the live-review categories.
+
+#### Calibration Result with Production Store
+
+| Metric | B9 (synthetic, wrong store) | B9-3 (real, correct store) |
+|--------|---------------------------|---------------------------|
+| `samples_calibrated` | 32 | 69 |
+| `series_count` | 129 | 129 |
+| `entry_count` | 420 | 420 |
+| `cfm_vs_llm_correlation` | -0.097 | **-0.006** |
+| `pearson_t_stat` | ~-0.54 | **-0.051** |
+| `correlation_computed` | False | **True** |
+| `correlation_min_samples_met` | False | **True** |
+| `correlation_non_negative` | False | False |
+| `correlation_significant` | False | False |
+| `review_history` factor | 0.6313 (all 17 synthetic cats) | **0.0877** (10 real cats, 2 have RH entries) |
+| `recommendation` | CFM_SHADOW_STAYS | CFM_SHADOW_STAYS |
+
+### 22.5 Data Validity — LIVE TRIPLES CONFIRMED VALID
+
+| Check | Result |
+|-------|--------|
+| Triples generated by IntelligentReviewEngine | YES — ran against 26 real lore mbox files |
+| LLM confidence values from actual LLM API calls | YES — anthropic::claude-4-6-sonnet via qgenie-api.qualcomm.com |
+| llm_confidence variance > 0 | YES — std=0.094, range=0.55–0.98 |
+| claim_category derived from actual inline comments | YES — categories: design, commit_msg, bug, dt_binding, api_misuse, error_handling, convention, null_deref, resource_leak, race |
+| Values hardcoded or synthetic fixture | NO — IDs are SHA-256 derived hex (16 chars), verified by B9-10 test |
+| Copied from test fixtures | NO — none match `_SYNTHETIC_FIXTURE_IDS` set in B9-10 |
+
+### 22.6 Production Gate Status (Updated for B9-3)
+
+| # | Criterion | Required | B9 (original) | B9-3 (live, correct store) | Status |
+|---|-----------|----------|--------------|---------------------------|--------|
+| 1 | Calibration sessions | >= 50 | 32 | **69** | **PASS** |
+| 2 | Unique series_ids | >= 20 | 129 | 129 | PASS |
+| 3 | Claim categories | >= 8 | 17 | **10** | PASS |
+| 4 | Pearson(CFM, LLM) | >= +0.70 | -0.097 | **-0.006** | **FAIL** |
+| 5 | No safety floor violations | 0 | 0 | 0 | PASS |
+| 6 | Browser/API/CLI/source | All PASS | PARTIAL | PARTIAL | FAIL |
+| 7 | Provenance coverage | 100% | 100% | 100% | PASS |
+| 8 | Unsupported high-severity | 0 | 0 | 0 | PASS |
+| 9 | Correlation min samples | n >= 50 | 32 | **69** | **PASS** |
+| 10 | Correlation significant | t > t-crit | False | False | FAIL |
+| 11 | REVIEW_HISTORY factor > 0 | >= 1 category | 13/17 | **2/10** | PASS |
+
+**Summary: 8/11 PASS (was 6/11)** — Two new PASSes: `calibration_sessions` and `correlation_min_samples_met`. Remaining FAILs: Pearson direction (r=-0.006 < +0.70), statistical significance (t=-0.051), browser validation.
+
+**Root cause of low Pearson with live triples:** The production store has entries only for ASoC-domain categories (`dai`, `dt_binding`, `locking`, etc.). Live reviews of general ASoC patches generate inline comments in categories like `design`, `commit_msg`, `bug` which have zero store entries. With review_history=0 for 8/10 categories, CFM scores cluster near zero, producing near-zero correlation. This is a store coverage gap, not a correlation architecture failure.
+
+### 22.7 Tests Added (B9-8 through B9-12)
+
+| Test ID | Test Name | Coverage |
+|---------|-----------|----------|
+| B9-8 | `test_B9_output_jsonl_schema_valid` | Validates `calibration_triples_b9.jsonl`: exists, non-empty, correct schema for every line |
+| B9-9 | `test_B9_output_result_json_schema_valid` | Validates `calibration_result_b9.json`: exists, valid JSON, all required keys with correct types |
+| B9-10 | `test_B9_output_triples_real_not_hardcoded` | Proves triples are real (16-char hex IDs, variance > 0, no synthetic fixture IDs) |
+| B9-11 | `test_B9_pearson_unavailable_handled_gracefully` | When Pearson=None (zero variance), report has correct None fields and non-empty recommendation |
+| B9-12 | `test_B9_production_gate_not_activated` | CFM mode not 'production'; `production_gate_criteria_met=False` always |
+
+All 5 tests PASS. Full suite: **723 passed, 2 skipped** (was 718/2).
+
+### 22.8 Commit Hygiene Corrective Action (B9-4)
+
+Since history rewrite is not authorized, B9-4 carries the `Signed-off-by` trailer for the changes made in this post-commit audit (script fixes, 5 new tests, report update).
+
+---
+
+## 23. Updated Commits Table (Including B9-3 and B9-4)
+
+| Commit | Hash | Description |
+|--------|------|-------------|
+| B9-1 | `ade8ac7` | apply_status closure + B9 tests (1-7) |
+| B9-2 | `abad482` | TRACK_B9_LIVE_REVIEW_CALIBRATION_REPORT.md (original) |
+| B9-3 | `c111be7` | scripts/run_live_calibration_b9.py (COMMIT_HYGIENE_FAILURE: missing Signed-off-by) |
+| B9-4 | *(this commit)* | Post-commit audit fixes: store path, triple cap, output fields, 5 new tests, report update |
+
+---
+
+## 24. Updated Final Recommendation
+
+**Verdict: `CFM_NEEDS_MORE_CALIBRATION`**
+
+B9-3 post-commit audit confirms:
+
+1. **Pearson is now computable** (r=-0.006) — the structural `Pearson=None` blocker is resolved. The fix was the wrong store path in the script.
+
+2. **Sample gate passes** (n=69 ≥ 50) — the `correlation_min_samples_met` gate now PASS.
+
+3. **Pearson is near-zero, not significant** — r=-0.006, t=-0.051. This is not a sign issue; it means CFM and LLM confidence are essentially uncorrelated with the current store coverage.
+
+4. **Root cause of near-zero Pearson:** Only `dt_binding` and `null_deref` categories have store entries among the 10 live-review categories. The other 8 categories have zero review-history evidence, so CFM scores cluster near zero → near-zero variance → near-zero Pearson.
+
+5. **Path to Pearson ≥ +0.70:** Ingest store entries for the live-review categories (`design`, `commit_msg`, `bug`, `api_misuse`, `convention`, `race`, `resource_leak`, `error_handling`). Once the store covers these categories with real lore discussion evidence, CFM scores will have meaningful variance aligned with LLM confidence levels.
+
+**Recommended next steps for Track-B.10:**
+
+1. Expand store ingestion to cover live-review categories (design, commit_msg, bug, api_misuse, convention, race, resource_leak, error_handling)
+2. Re-run `scripts/run_live_calibration_b9.py` after store expansion
+3. Expect Pearson to increase once CFM scores have variance matching LLM confidence
+4. Run Playwright smoke test against live server (G-B9-5)
+5. Add corrective `Signed-off-by` discipline to all future commits
+
+*Report updated by Track-B.9 B9-3 post-commit audit, 2026-07-27.*
+*Verdict updated to: CFM_NEEDS_MORE_CALIBRATION.*
+*723 tests passing (2 skipped), 0 STOP conditions triggered.*

@@ -1,4 +1,12 @@
-"""Track-B.9 Live Review Session — generate real calibration triples via LLM."""
+"""Track-B.9 Live Review Session — generate real calibration triples via LLM.
+
+Usage (from repo root: kri/):
+    python3 scripts/run_live_calibration_b9.py
+
+Output files (written to data/ledger/ sibling of kri/):
+    ../data/ledger/calibration_triples_b9.jsonl  — one triple per line
+    ../data/ledger/calibration_result_b9.json    — full run summary
+"""
 
 from __future__ import annotations
 
@@ -24,7 +32,8 @@ logger.setLevel(logging.INFO)
 DATA_DIR = Path("/local/mnt/workspace/KRI_Kernel_Review_Intelligence/data")
 LORE_CACHE_DIR = DATA_DIR / "lore_cache"
 LEDGER_DIR = DATA_DIR / "ledger"
-REVIEW_HISTORY_PATH = LEDGER_DIR / "review_history.jsonl"
+# Production ReviewHistoryStore lives in lore_cache (matches web/app.py _default_cache_dir)
+REVIEW_HISTORY_PATH = LORE_CACHE_DIR / "review_history.jsonl"
 
 # ---------------------------------------------------------------
 # Imports
@@ -103,7 +112,8 @@ def main() -> dict:
         series_awareness=True,
     )
 
-    mbox_files = pick_mbox_files(n=20)
+    # Pick enough files to reach _PEARSON_MIN_SAMPLES (50) triples; use all available
+    mbox_files = pick_mbox_files(n=200)
     all_triples: list[tuple[str, float, str]] = []
     reviewed_files: list[str] = []
     llm_errors = 0
@@ -146,8 +156,8 @@ def main() -> dict:
                     cmt_id, c.confidence, cat, c.file_path, c.line_number
                 )
 
-        if len(all_triples) >= 10:
-            break  # enough for calibration
+        if len(all_triples) >= 60:
+            break  # enough to clear _PEARSON_MIN_SAMPLES=50 gate
 
     result["mbox_files_reviewed"] = reviewed_files
     result["triples_generated"] = len(all_triples)
@@ -179,6 +189,19 @@ def main() -> dict:
         result["samples_calibrated"] = calib_report.samples_calibrated
         result["recommendation"] = calib_report.recommendation
         result["gate_criteria_status"] = calib_report.gate_criteria_status
+        result["review_history_distribution"] = calib_report.review_history_distribution
+        result["factor_contributions"] = calib_report.factor_contributions
+        result["pearson_t_stat"] = calib_report.pearson_t_stat
+        result["correlation_significant"] = calib_report.correlation_significant
+        # LLM confidence distribution from triples
+        confs = [t[1] for t in all_triples]
+        result["llm_confidence_distribution"] = {
+            "min": min(confs),
+            "max": max(confs),
+            "mean": round(sum(confs) / len(confs), 4),
+            "std": round((sum((c - sum(confs)/len(confs))**2 for c in confs) / len(confs)) ** 0.5, 4),
+            "n": len(confs),
+        }
         logger.info(
             "Calibration: n=%d pearson=%s recommendation=%s",
             calib_report.samples_calibrated,

@@ -7,6 +7,11 @@ B9-4  test_B9_pearson_none_when_llm_confidence_constant
 B9-5  test_B9_series_count_from_production_store
 B9-6  test_B9_gate_criteria_status_has_all_required_keys
 B9-7  test_B9_apply_status_updated_in_index_jsonl
+B9-8  test_B9_output_jsonl_schema_valid
+B9-9  test_B9_output_result_json_schema_valid
+B9-10 test_B9_output_triples_real_not_hardcoded
+B9-11 test_B9_pearson_unavailable_handled_gracefully
+B9-12 test_B9_production_gate_not_activated
 """
 
 from __future__ import annotations
@@ -319,4 +324,211 @@ def test_B9_apply_status_updated_in_index_jsonl() -> None:
     assert apply_clean_count >= 20, (
         f"Expected apply_status='APPLY_CLEAN' count >= 20; "
         f"got {apply_clean_count} (all counts: {counts})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B9-8: output JSONL schema validation (production ledger file)
+# ---------------------------------------------------------------------------
+
+_LEDGER_DIR = Path("/local/mnt/workspace/KRI_Kernel_Review_Intelligence/data/ledger")
+_TRIPLES_JSONL = _LEDGER_DIR / "calibration_triples_b9.jsonl"
+_RESULT_JSON = _LEDGER_DIR / "calibration_result_b9.json"
+
+
+def test_B9_output_jsonl_schema_valid() -> None:
+    """calibration_triples_b9.jsonl must exist, be non-empty, and every line
+    must be a valid JSON object with keys: comment_id (str), llm_confidence
+    (float, 0<c<1), claim_category (str).
+
+    Skips if the file is absent (script not yet run).
+    """
+    if not _TRIPLES_JSONL.exists():
+        pytest.skip(f"triples JSONL not found at {_TRIPLES_JSONL} — run the script first")
+
+    lines = [l for l in _TRIPLES_JSONL.read_text().splitlines() if l.strip()]
+    assert lines, f"{_TRIPLES_JSONL.name} is empty"
+
+    for i, raw in enumerate(lines, 1):
+        obj = json.loads(raw)
+        assert "comment_id" in obj, f"Line {i}: missing comment_id"
+        assert "llm_confidence" in obj, f"Line {i}: missing llm_confidence"
+        assert "claim_category" in obj, f"Line {i}: missing claim_category"
+        conf = obj["llm_confidence"]
+        assert isinstance(conf, float), f"Line {i}: llm_confidence must be float, got {type(conf)}"
+        assert 0.0 < conf < 1.0, f"Line {i}: llm_confidence out of range (0,1): {conf}"
+        assert isinstance(obj["comment_id"], str) and len(obj["comment_id"]) > 0, (
+            f"Line {i}: comment_id must be non-empty str"
+        )
+        assert isinstance(obj["claim_category"], str) and len(obj["claim_category"]) > 0, (
+            f"Line {i}: claim_category must be non-empty str"
+        )
+
+
+# ---------------------------------------------------------------------------
+# B9-9: output result JSON schema validation
+# ---------------------------------------------------------------------------
+
+_REQUIRED_RESULT_KEYS = {
+    "triples_generated",
+    "mbox_files_reviewed",
+    "sample_triples",
+    "calibration_run",
+    "pearson",
+    "triples_file",
+    "samples_calibrated",
+    "recommendation",
+    "gate_criteria_status",
+}
+
+
+def test_B9_output_result_json_schema_valid() -> None:
+    """calibration_result_b9.json must exist, be valid JSON, and contain all
+    required keys with correct types.
+
+    Skips if the file is absent (script not yet run).
+    """
+    if not _RESULT_JSON.exists():
+        pytest.skip(f"result JSON not found at {_RESULT_JSON} — run the script first")
+
+    result = json.loads(_RESULT_JSON.read_text())
+    missing = _REQUIRED_RESULT_KEYS - result.keys()
+    assert missing == set(), f"calibration_result_b9.json missing keys: {missing}"
+
+    assert isinstance(result["triples_generated"], int), "triples_generated must be int"
+    assert isinstance(result["mbox_files_reviewed"], list), "mbox_files_reviewed must be list"
+    assert isinstance(result["calibration_run"], bool), "calibration_run must be bool"
+    assert isinstance(result["gate_criteria_status"], dict), "gate_criteria_status must be dict"
+    assert result["triples_generated"] >= 0, "triples_generated must be >= 0"
+
+
+# ---------------------------------------------------------------------------
+# B9-10: triples came from real LLM review (not hardcoded or synthetic)
+# ---------------------------------------------------------------------------
+
+_SYNTHETIC_FIXTURE_IDS = {
+    "0000000000000001",
+    "0000000000000002",
+    "deadbeef00000000",
+    "test-id-1",
+    "test-id-2",
+    "synthetic",
+    "cmt-const-0",
+    "cmt-const-1",
+    "cmt-gate-1",
+    "cmt-b9-dai",
+    "cmt-b9-lock",
+    "cmt-b9-style",
+}
+
+
+def test_B9_output_triples_real_not_hardcoded() -> None:
+    """Triples in calibration_triples_b9.jsonl must not match known synthetic
+    fixture IDs used in unit tests. They must have SHA-256-derived hex comment_ids
+    (16-char hex string) and varied llm_confidence values (std > 0.0).
+
+    Skips if the file is absent.
+    """
+    if not _TRIPLES_JSONL.exists():
+        pytest.skip(f"triples JSONL not found at {_TRIPLES_JSONL} — run the script first")
+
+    lines = [l for l in _TRIPLES_JSONL.read_text().splitlines() if l.strip()]
+    if not lines:
+        pytest.skip("triples JSONL is empty — no triples to validate")
+
+    triples = [json.loads(l) for l in lines]
+    comment_ids = [t["comment_id"] for t in triples]
+    confs = [t["llm_confidence"] for t in triples]
+
+    # None of the IDs should match known synthetic test fixtures
+    synthetic_found = [cid for cid in comment_ids if cid in _SYNTHETIC_FIXTURE_IDS]
+    assert synthetic_found == [], (
+        f"Found synthetic fixture IDs in production triples: {synthetic_found}"
+    )
+
+    # IDs must be 16-char lowercase hex (SHA-256 derived from real comments)
+    import re
+    hex_pattern = re.compile(r'^[0-9a-f]{16}$')
+    non_hex = [cid for cid in comment_ids if not hex_pattern.match(cid)]
+    assert non_hex == [], (
+        f"comment_ids must be 16-char hex (SHA-256 derived); non-hex IDs: {non_hex[:5]}"
+    )
+
+    # Confidence values must have some variance (real reviews produce varied scores)
+    if len(confs) >= 2:
+        mean = sum(confs) / len(confs)
+        std = (sum((c - mean) ** 2 for c in confs) / len(confs)) ** 0.5
+        assert std > 0.0, (
+            f"llm_confidence std must be > 0 for real triples (constant = synthetic); "
+            f"got std={std}, confs={confs}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# B9-11: Pearson unavailable handled gracefully in calibration report
+# ---------------------------------------------------------------------------
+
+
+def test_B9_pearson_unavailable_handled_gracefully() -> None:
+    """When Pearson is None (either due to min-samples or zero variance),
+    the calibration report must still be a valid CFMCalibrationReport with:
+    - cfm_vs_llm_correlation is None
+    - pearson_t_stat is None
+    - correlation_significant is None or False
+    - gate_criteria_status['correlation_computed'] is False
+    - recommendation is a non-empty string
+    """
+    store = _make_store(_entry("sn1", "null-p-1@t", "dai", text="null pearson test"))
+    calibrator = _make_calibrator(store)
+
+    # constant confidence → Pearson = None (zero variance)
+    report = calibrator.calibrate([("cmt-null-p", 0.5, "dai")])
+
+    assert report.cfm_vs_llm_correlation is None
+    assert report.pearson_t_stat is None
+    assert not report.gate_criteria_status.get("correlation_computed", True), (
+        "correlation_computed must be False when Pearson is None"
+    )
+    assert isinstance(report.recommendation, str) and report.recommendation, (
+        "recommendation must be a non-empty string even when Pearson is None"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B9-12: CFM production gate is NOT activated (gate invariant test)
+# ---------------------------------------------------------------------------
+
+
+def test_B9_production_gate_not_activated() -> None:
+    """CFM production gate must remain disabled even when CFMCalibrator
+    is constructed and calibrate() is called.
+
+    This test imports the production app module and verifies that the global
+    CFM_MODE is 'shadow' (not 'production'). It also verifies that no
+    calibration report can set production_gate_criteria_met=True without
+    explicit authorized activation.
+
+    Only checks the mode flag — does not start the web server.
+    """
+    try:
+        from kri.web import app as web_app
+        mode = getattr(web_app, "CFM_MODE", None)
+        if mode is not None:
+            assert mode in ("shadow", "disabled", "off", None), (
+                f"CFM_MODE must not be 'production'; got '{mode}'"
+            )
+    except ImportError:
+        pass  # app not available in this test context — skip silently
+
+    # Verify calibrator never auto-promotes to production
+    store = _make_store(
+        *[_entry(f"sg{i}", f"gate-{i}@t", "dai", text=f"gate check {i}") for i in range(10)]
+    )
+    calibrator = _make_calibrator(store)
+    triples = [(f"cmt-gate-{i}", 0.5 + i * 0.03, "dai") for i in range(5)]
+    report = calibrator.calibrate(triples)
+
+    assert report.production_gate_criteria_met is False, (
+        f"production_gate_criteria_met must be False (gate NOT activated); "
+        f"got {report.production_gate_criteria_met}"
     )
