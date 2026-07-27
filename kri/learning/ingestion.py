@@ -56,8 +56,15 @@ _CLAIM_SIGNALS: list[tuple[str, str]] = [
     (r"(lpass|qdsp|q6afe|q6adm|q6asm|audioreach)", "qcom_lpass"),
     (r"(probe.?order|pm_runtime|devm_snd|register_component|register_card)", "audio_lifecycle"),
     (r"(dt.?binding|device.?tree|compatible|of_device_id)", "dt_binding"),
+    # B10: new claim-signal patterns — generic kernel review vocabulary, no vendor prefixes
+    (r"(off.by.one|uninitialized\s+(var|variable)?|causes?\s+(a\s+)?crash|regression\s+(in|since)|wrong\s+(return\s+)?(value|result)|undefined\s+behav|integer\s+(overflow|underflow)|out.of.bounds|array\s+overflow)", "bug"),
+    (r"(commit\s+(message|log|title|subject)|subject\s+line|fix\s+(the\s+)?(commit|changelog)|missing\s+signed.off|changelog\s+(should|must|needs))", "commit_msg"),
+    (r"(naming\s+convention|use\s+bit\s*\(|use\s+array_size\b|is_err\b|kernel\s+convention|prefer\s+the\s+helper|use\s+\w+\(\)\s+instead)", "convention"),
+    (r"(data\s+race|toctou|read_once\b|write_once\b|memory\s+barrier|synchronize_rcu|rcu_dereference|smp_mb\b|smp_rmb\b|smp_wmb\b)", "race"),
+    (r"(resource\s+leak|missing\s+(put|release|unref|free)\b|forgot\s+to\s+(release|put|free)|clk_put\b|regulator_put\b|iounmap\b|pm_runtime_put\b|of_node_put\b|devm_\w+_release)", "resource_leak"),
+    (r"(design\s+(issue|flaw|problem|choice|concern|decision)|wrong\s+(design|abstraction|layer)|layering\s+violation|bad\s+design|design\s+doesn.t\s+scale|wrong\s+level\s+of\s+abstraction)", "design"),
+    (r"(api.?misuse|wrong\s+function|should\s+use|incorrect\s+use\s+of|deprecated\s+(function|api)|use\s+the\s+correct\s+(api|function)|calls?\s+the\s+wrong)", "api_misuse"),
     (r"(coding\s+style|checkpatch|whitespace|indent|comment)", "style"),
-    (r"(api.?misuse|wrong\s+function|should\s+use)", "api_misuse"),
     (r"(missing\s+test|add\s+test|no\s+test)", "missing_test"),
     (r"(performance|inefficient|slow|cache)", "performance"),
 ]
